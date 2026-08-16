@@ -1,0 +1,31 @@
+# Dastaan — two-service deployment (web UI + API), one command:
+#   docker compose up --build
+# Set JWT_SECRET and CODE_PEPPER in the environment or a .env file first.
+services:
+  api:
+    build: ./dastaan-api
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "4000"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CODE_PEPPER: ${CODE_PEPPER:?set CODE_PEPPER}
+      WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:3000}
+      TRUST_PROXY: "1"
+      DB_PATH: /data/dastaan.db
+    volumes:
+      - dastaan-data:/data
+    restart: unless-stopped
+
+  web:
+    build: ./dastaan-web
+    environment:
+      API_URL: http://api:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  dastaan-data:

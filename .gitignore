@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# builds
+.next/
+out/
+dist/
+build/
+
+# secrets — never commit
+.env
+.env.local
+.env*.local
+*.pem
+*.p12
+signerCert.pem
+signerKey.pem
+
+# local database (dev only; production uses Supabase Postgres)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# logs & os
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# vercel
+.vercel
+
+# large client reference material (kept out of the public repo)
+FreshaVideo.MP4
