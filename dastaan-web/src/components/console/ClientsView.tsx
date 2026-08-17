@@ -12,7 +12,7 @@ type ClientRow = {
 type Detail = {
   id: string; name: string; phone: string | null; userId: string | null;
   loyalty: { tier: string; points: number; lifetimePoints: number } | null;
-  history: { id: string; startsAt: string; status: string; paid: boolean; stylist: string; services: string[] }[];
+  history: { id: string; startsAt: string; status: string; paid: boolean; barber: string; services: string[] }[];
 };
 
 export default function ClientsView() {
@@ -173,7 +173,7 @@ export default function ClientsView() {
                     {h.paid ? "paid" : h.status}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-charcoal/55">{h.services.join(" + ")} · {h.stylist}</p>
+                <p className="mt-0.5 text-xs text-charcoal/55">{h.services.join(" + ")} · {h.barber}</p>
               </div>
             ))}
             {selected.history.length === 0 && <p className="text-sm text-charcoal/45">No bookings yet.</p>}

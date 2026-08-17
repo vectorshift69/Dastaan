@@ -11,8 +11,11 @@ services:
     plan: free # free instances sleep when idle — reminders resume on next request
     region: frankfurt # closest Render region to the UAE
     rootDir: dastaan-api
-    buildCommand: npm ci
-    startCommand: npm start
+    # NODE_ENV=production makes `npm ci` skip devDependencies, so TypeScript
+    # would be missing at build time and tsx missing at run time. Install dev
+    # deps explicitly for the build, compile to dist/, then run plain node.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start # node dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -24,11 +27,17 @@ services:
       # Supabase pooled connection string
       - key: DATABASE_URL
         sync: false
-      # generate: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      # Signs session cookies. Never has to leave Render, so let Render
+      # generate it — it will not prompt you for this one, and that's correct.
       - key: JWT_SECRET
         generateValue: true
+      # Peppers the HMAC of the 4-digit staff codes. This one you MUST supply,
+      # because Free instances have no shell — the seed runs from your machine,
+      # and a code hashed with a different pepper will never verify here.
+      # Use the exact same value as CODE_PEPPER in your local .env.
+      # Changing it later invalidates every existing staff code.
       - key: CODE_PEPPER
-        generateValue: true
+        sync: false
       # the deployed web app's origin(s), comma separated
       - key: WEB_ORIGINS
         sync: false

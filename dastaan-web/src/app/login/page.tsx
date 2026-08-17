@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import Logo from "@/components/Logo";
 
 export default function ClientLogin() {
   const router = useRouter();
@@ -45,8 +46,8 @@ export default function ClientLogin() {
       <div className="pointer-events-none fixed top-[-20%] left-1/2 h-[60vh] w-[70vw] -translate-x-1/2 rounded-full bg-gold/6 blur-[120px]" />
 
       <div className="animate-fade-up w-full max-w-md">
-        <Link href="/" className="font-display block text-center text-3xl font-semibold tracking-[0.25em] text-ivory">
-          DASTAAN
+        <Link href="/" aria-label="Dastaan — home" className="flex justify-center text-ivory">
+          <Logo stacked markClass="h-16 w-auto" wordClass="h-7 w-auto" />
         </Link>
         <div className="gold-rule mx-auto mt-5 w-24" />
         <p className="mt-5 text-center text-sm font-light text-ivory/50">

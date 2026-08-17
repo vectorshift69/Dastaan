@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import Logo from "@/components/Logo";
 
 type Invite = {
   clientName: string;
@@ -55,7 +56,9 @@ export default function ReviewPage({ params }: { params: Promise<{ token: string
       <div className="pointer-events-none fixed top-[-20%] left-1/2 h-[55vh] w-[65vw] -translate-x-1/2 rounded-full bg-gold/6 blur-[120px]" />
 
       <div className="animate-fade-up w-full max-w-md text-center">
-        <Link href="/" className="font-display text-3xl font-semibold tracking-[0.25em] text-ivory">DASTAAN</Link>
+        <Link href="/" aria-label="Dastaan — home" className="flex justify-center text-ivory">
+          <Logo stacked markClass="h-14 w-auto" wordClass="h-6 w-auto" />
+        </Link>
         <div className="gold-rule mx-auto mt-5 w-24" />
 
         {invalid && <p className="mt-12 text-sm text-ivory/55">This review link isn&apos;t valid or has expired.</p>}

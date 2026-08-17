@@ -16,7 +16,7 @@ export type Service = {
   name: string;
   minutes: number;
   price: number; // AED
-  category: "Hair" | "Beard" | "Combos" | "Grooming" | "Ladies" | "Colour" | "Nails";
+  category: "Hair" | "Beard" | "Combos" | "Grooming";
 };
 
 export type Barber = {
@@ -76,31 +76,28 @@ export const branches: Branch[] = [
 export const services: Service[] = [
   { id: "s1", name: "Skin Fade & Beard", minutes: 75, price: 268, category: "Combos" },
   { id: "s2", name: "Classic Haircut", minutes: 45, price: 150, category: "Hair" },
-  { id: "s11", name: "Ladies' Cut & Style", minutes: 60, price: 220, category: "Ladies" },
   { id: "s3", name: "Skin Fade / Taper Fade", minutes: 50, price: 180, category: "Hair" },
-  { id: "s12", name: "Blow Dry & Styling", minutes: 45, price: 140, category: "Ladies" },
   { id: "s4", name: "Beard Trim & Line Up", minutes: 30, price: 95, category: "Beard" },
-  { id: "s13", name: "Full Hair Colour", minutes: 90, price: 380, category: "Colour" },
   { id: "s5", name: "Hot Towel Shave", minutes: 40, price: 120, category: "Beard" },
-  { id: "s14", name: "Manicure & Pedicure", minutes: 60, price: 180, category: "Nails" },
   { id: "s6", name: "Haircut & Hot Towel Shave", minutes: 80, price: 240, category: "Combos" },
-  { id: "s15", name: "Keratin Treatment", minutes: 120, price: 550, category: "Ladies" },
   { id: "s7", name: "Kids Cut (under 12)", minutes: 30, price: 90, category: "Hair" },
   { id: "s8", name: "Black Mask Facial", minutes: 35, price: 110, category: "Grooming" },
   { id: "s9", name: "Head Massage", minutes: 20, price: 70, category: "Grooming" },
   { id: "s10", name: "Full Grooming Ritual", minutes: 120, price: 420, category: "Combos" },
+  { id: "s11", name: "Beard Colour", minutes: 40, price: 130, category: "Beard" },
+  { id: "s12", name: "Head Shave (razor finish)", minutes: 35, price: 110, category: "Hair" },
 ];
 
 export const barbers: Barber[] = [
   { id: "br1", name: "Aqib Khan", title: "Master Barber", rating: 4.9, initials: "AK", tone: "#5b4a2f", branchId: "b1" },
-  { id: "br7", name: "Leonora Filipe", title: "Senior Stylist", rating: 4.9, initials: "LF", tone: "#5b3f54", branchId: "b1" },
   { id: "br3", name: "Mouawia Majzoub", title: "Master Barber", rating: 5.0, initials: "MM", tone: "#4a3f5b", branchId: "b1" },
-  { id: "br8", name: "Amira Hadid", title: "Colour Specialist", rating: 4.8, initials: "AH", tone: "#3f5b57", branchId: "b1" },
   { id: "br2", name: "Ali Raza", title: "Senior Barber", rating: 4.8, initials: "AR", tone: "#3f4a5b", branchId: "b1" },
-  { id: "br4", name: "Azeem Aslam", title: "Barber & Stylist", rating: 4.7, initials: "AA", tone: "#2f5b4a", branchId: "b1" },
+  { id: "br7", name: "Bilal Ahmed", title: "Senior Barber", rating: 4.9, initials: "BA", tone: "#3f5b57", branchId: "b1" },
+  { id: "br4", name: "Azeem Aslam", title: "Barber", rating: 4.7, initials: "AA", tone: "#2f5b4a", branchId: "b1" },
+  { id: "br8", name: "Tariq Mehmood", title: "Barber", rating: 4.7, initials: "TM", tone: "#54463f", branchId: "b1" },
   { id: "br5", name: "Yousuf Mirza", title: "Senior Barber", rating: 4.8, initials: "YM", tone: "#5b2f39", branchId: "b2" },
-  { id: "br9", name: "Rania Aziz", title: "Ladies' Stylist", rating: 4.9, initials: "RA", tone: "#54463f", branchId: "b2" },
   { id: "br6", name: "Hassan Adel", title: "Barber", rating: 4.6, initials: "HA", tone: "#39505b", branchId: "b2" },
+  { id: "br9", name: "Imran Sheikh", title: "Master Barber", rating: 4.9, initials: "IS", tone: "#5b3f54", branchId: "b2" },
 ];
 
 export const dayAppointments: Appointment[] = [
@@ -116,10 +113,10 @@ export const dayAppointments: Appointment[] = [
   { id: "a10", barberId: "br4", client: "Marwan Adel", phone: "+971 50 776 9911", serviceIds: ["s8", "s9"], start: "10:45", minutes: 55, status: "No Show", online: true, paid: false },
   { id: "a11", barberId: "br4", client: "Yasser Zaman", phone: "+971 54 332 8080", serviceIds: ["s2"], start: "13:00", minutes: 45, status: "Confirmed", online: false, paid: false },
   { id: "a12", barberId: "br4", client: "Omar Al-Farsi", phone: "+971 55 660 1188", serviceIds: ["s10"], start: "16:00", minutes: 120, status: "Booked", online: true, paid: true, loyalty: { tier: "Silver", points: 2100 } },
-  { id: "a13", barberId: "br7", client: "Fatima Al-Nuaimi", phone: "+971 50 441 7789", serviceIds: ["s11", "s12"], start: "11:30", minutes: 105, status: "Confirmed", online: true, paid: true, loyalty: { tier: "Gold", points: 6400 } },
-  { id: "a14", barberId: "br7", client: "Sara Mansour", phone: "+971 55 782 3310", serviceIds: ["s15"], start: "15:00", minutes: 120, status: "Booked", online: false, paid: false },
-  { id: "a15", barberId: "br8", client: "Reem Khalifa", phone: "+971 52 990 4471", serviceIds: ["s13"], start: "10:30", minutes: 90, status: "Arrived", online: true, paid: false, loyalty: { tier: "Silver", points: 1900 } },
-  { id: "a16", barberId: "br8", client: "Noor Haddad", phone: "+971 54 118 6620", serviceIds: ["s14"], start: "14:00", minutes: 60, status: "Booked", online: true, paid: true },
+  { id: "a13", barberId: "br7", client: "Hamza Sheikh", phone: "+971 50 441 7789", serviceIds: ["s2", "s4"], start: "11:30", minutes: 75, status: "Confirmed", online: true, paid: true, loyalty: { tier: "Gold", points: 6400 } },
+  { id: "a14", barberId: "br7", client: "Bilal Rahman", phone: "+971 55 782 3310", serviceIds: ["s10"], start: "15:00", minutes: 120, status: "Booked", online: false, paid: false },
+  { id: "a15", barberId: "br8", client: "Zaid Al-Marri", phone: "+971 52 990 4471", serviceIds: ["s11"], start: "10:30", minutes: 40, status: "Arrived", online: true, paid: false, loyalty: { tier: "Silver", points: 1900 } },
+  { id: "a16", barberId: "br8", client: "Rashid Nasser", phone: "+971 54 118 6620", serviceIds: ["s12"], start: "14:00", minutes: 35, status: "Booked", online: true, paid: true },
 ];
 
 /* time helpers */

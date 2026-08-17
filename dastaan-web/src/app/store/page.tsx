@@ -61,8 +61,8 @@ export default function StorePage() {
         <p className="eyebrow">Take it home</p>
         <h1 className="font-display mt-4 text-5xl font-medium md:text-7xl">The Dastaan Store</h1>
         <p className="mt-5 max-w-md text-sm leading-relaxed font-light text-ivory/55">
-          The same products our stylists reach for — hair care, styling, beard
-          and colour care, curated in-house.
+          The same products our barbers reach for — beard care, styling and
+          shaving, curated in-house.
         </p>
 
         {/* category filter */}

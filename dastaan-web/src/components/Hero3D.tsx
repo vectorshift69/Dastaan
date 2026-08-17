@@ -20,7 +20,7 @@ const CHARCOAL = { color: "#454545", metalness: 0.55, roughness: 0.38 } as const
 /* as the page scrolls, like a presentation:                           */
 /*   slide 0 (hero)      → right of the headline                       */
 /*   slide 1 (services)  → sweeps to the left margin, turns            */
-/*   slide 2 (stylists)  → crosses to the right, turns back            */
+/*   slide 2 (barbers)   → crosses to the right, turns back            */
 /*   slide 3 (branches)  → sinks away and hands the page over          */
 /* ------------------------------------------------------------------ */
 
@@ -217,41 +217,6 @@ function Comb() {
   );
 }
 
-/* Round vanity hand-mirror — the unisex touch */
-function Mirror() {
-  return (
-    <Float speed={1.3} rotationIntensity={0.4} floatIntensity={0.8}>
-      <group position={[-0.75, 1.55, -1.5]} rotation={[0.25, 0.55, -0.35]} scale={0.72}>
-        {/* frame */}
-        <mesh castShadow>
-          <torusGeometry args={[0.55, 0.06, 24, 72]} />
-          <meshStandardMaterial {...GOLD} />
-        </mesh>
-        {/* glass */}
-        <mesh>
-          <circleGeometry args={[0.52, 48]} />
-          <meshPhysicalMaterial
-            color="#cfd6dd"
-            metalness={1}
-            roughness={0.03}
-            clearcoat={1}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-        {/* handle */}
-        <mesh position={[0, -0.92, 0]} castShadow>
-          <cylinderGeometry args={[0.05, 0.065, 0.75, 20]} />
-          <meshStandardMaterial {...GOLD} />
-        </mesh>
-        <mesh position={[0, -1.34, 0]}>
-          <sphereGeometry args={[0.08, 24, 16]} />
-          <meshStandardMaterial {...GOLD_BRIGHT} />
-        </mesh>
-      </group>
-    </Float>
-  );
-}
-
 /* Tiny gold dust motes for depth */
 function Motes() {
   const pts = useMemo(() => {
@@ -310,7 +275,6 @@ export default function Hero3D() {
             <Scissors />
             <Razor />
             <Comb />
-            <Mirror />
             <Motes />
           </Choreo>
           <ContactShadows position={[0, -2.5, 0]} opacity={0.5} scale={10} blur={2.8} far={4} color="#000000" />

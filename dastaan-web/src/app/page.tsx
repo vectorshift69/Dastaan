@@ -1,6 +1,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import Nav from "@/components/Nav";
+import Logo from "@/components/Logo";
 import { services, barbers, branches, CURRENCY } from "@/lib/data";
 
 const Hero3D = dynamic(() => import("@/components/Hero3D"));
@@ -20,7 +21,7 @@ export default function Home() {
 
         <div className="relative z-10 mx-auto w-full max-w-7xl px-6 lg:px-10">
           <div className="max-w-2xl">
-            <p className="eyebrow animate-fade-up">Est. MMXXVI · Unisex Salon · Dubai</p>
+            <p className="eyebrow animate-fade-up">Est. MMXXVI · Gentlemen's Grooming · Dubai</p>
             <h1
               className="font-display animate-fade-up mt-6 text-6xl leading-[0.95] font-medium md:text-8xl"
               style={{ animationDelay: "120ms" }}
@@ -33,9 +34,9 @@ export default function Home() {
               className="animate-fade-up mt-8 max-w-md text-[15px] leading-relaxed font-light text-ivory/65"
               style={{ animationDelay: "240ms" }}
             >
-              Master stylists for him and for her — precision cuts, colour,
-              grooming, and a chair that remembers you. Dastaan is self-care as
-              it was always meant to be: unhurried, precise, personal.
+              Master barbers, black-label service, and a chair that
+              remembers you. Dastaan is grooming as it was always meant to be —
+              unhurried, precise, personal.
             </p>
             <div
               className="animate-fade-up mt-10 flex flex-wrap items-center gap-4"
@@ -52,7 +53,7 @@ export default function Home() {
               className="animate-fade-up mt-14 flex items-center gap-8 text-xs tracking-widest text-ivory/40 uppercase"
               style={{ animationDelay: "480ms" }}
             >
-              <span>For him &amp; for her</span>
+              <span>12 master barbers</span>
               <span className="h-1 w-1 rounded-full bg-gold" />
               <span>2 branches</span>
               <span className="h-1 w-1 rounded-full bg-gold" />
@@ -76,8 +77,8 @@ export default function Home() {
               <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">Services</h2>
             </div>
             <p className="max-w-sm text-sm leading-relaxed font-light text-ivory/50">
-              One menu, every guest — cuts, colour, grooming, and nails. Priced
-              honestly, timed generously.
+              Cuts, beards, shaves and grooming. Priced honestly, timed
+              generously — no rushing the chair.
             </p>
           </div>
 
@@ -107,15 +108,15 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ---------------- STYLISTS (slide 2: tools cross right) ---------------- */}
-      <section id="stylists" className="relative z-10 py-28">
+      {/* ---------------- BARBERS (slide 2: tools cross right) ---------------- */}
+      <section id="barbers" className="relative z-10 py-28">
         <div className="mx-auto max-w-7xl px-6 lg:px-10">
           <div className="md:max-w-[62%]">
             <p className="eyebrow">The hands</p>
-            <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">Master stylists</h2>
+            <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">Master barbers</h2>
             <p className="mt-5 max-w-md text-sm leading-relaxed font-light text-ivory/50">
-              Barbers and stylists, one team — pick your favourite chair on
-              either side of the salon.
+              Time-served barbers who know the difference between a fade and
+              a shape-up. Pick your chair.
             </p>
 
             <div className="mt-14 grid grid-cols-2 gap-6 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4">
@@ -172,8 +173,8 @@ export default function Home() {
           <p className="eyebrow">Take it home</p>
           <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">The Dastaan Store</h2>
           <p className="mx-auto mt-6 max-w-md text-sm leading-relaxed font-light text-ivory/55">
-            Hair care, beard oils, styling tools, and salon-grade colour care —
-            curated in-house for him and for her.
+            Beard oils, pomades, and the tools our barbers actually use —
+            curated in-house.
           </p>
           <Link href="/store" className="btn-gold mt-8 inline-block rounded-full px-8 py-3.5 text-sm tracking-wide">
             Shop the store
@@ -193,10 +194,10 @@ export default function Home() {
       {/* ---------------- FOOTER ---------------- */}
       <footer className="relative z-10 border-t border-ivory/10 bg-ink py-14">
         <div className="mx-auto flex max-w-7xl flex-col items-center gap-6 px-6 lg:px-10">
-          <span className="font-display text-xl tracking-[0.25em]">DASTAAN</span>
+          <Logo stacked markClass="h-12 w-auto" wordClass="h-6 w-auto" />
           <div className="gold-rule w-40" />
           <p className="text-xs tracking-wider text-ivory/35">
-            © MMXXVI Dastaan Salon L.L.C. · Dubai, U.A.E. · All rights reserved
+            © MMXXVI Dastaan Grooming L.L.C. · Dubai, U.A.E. · All rights reserved
           </p>
         </div>
       </footer>

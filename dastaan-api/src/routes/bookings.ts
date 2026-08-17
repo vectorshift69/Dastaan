@@ -145,11 +145,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
       for (const cand of branchBarbers) {
         if (!(await overlaps(cand.id, body.startsAt, minutes))) { free = cand; break; }
       }
-      if (!free) return reply.code(409).send({ error: "No stylist free at that time" });
+      if (!free) return reply.code(409).send({ error: "No barber free at that time" });
       barberId = free.id;
     } else {
       if (!branchBarbers.some((b) => b.id === barberId))
-        return reply.code(400).send({ error: "Stylist not at this branch" });
+        return reply.code(400).send({ error: "Barber not at this branch" });
       if (await overlaps(barberId, body.startsAt, minutes))
         return reply.code(409).send({ error: "That time was just taken — pick another slot" });
     }

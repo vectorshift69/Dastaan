@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DASTAAN — Unisex Salon · Dubai",
+  title: "DASTAAN — Gentlemen's Grooming · Dubai",
   description:
-    "Dastaan unisex salon — precision cuts, colour, grooming, and nails for him and for her, plus a curated store. Book your appointment online.",
+    "Dastaan — precision cuts, beard work, hot-towel shaves and grooming by master barbers in Dubai, plus a curated store. Book your appointment online.",
 };
 
 export const viewport: Viewport = {

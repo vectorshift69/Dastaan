@@ -4,27 +4,23 @@ Two services plus a database. The web app is a natural fit for Vercel; the
 API needs a home that suits a long-running server (see "Choosing a host").
 
 ```
-GitHub (Arbaaz234/dastaan)  ──►  Vercel  ──►  dastaan-web
+GitHub (vectorshift69/Dastaan)  ──►  Vercel  ──►  dastaan-web
                             └──►  <API host>  ──►  dastaan-api  ──►  Supabase Postgres
 ```
 
 ---
 
-## 1. Push the code to GitHub (Arbaaz234)
+## 1. Push the code to GitHub (vectorshift69)
 
-The repo is already staged locally. Finish it from **your machine** (the
-assistant's sandbox can't delete files, so it couldn't complete the commit):
+Done — the code is on `vectorshift69/Dastaan`, branch `main`. Subsequent
+changes go up the usual way, from **your machine** (the assistant's sandbox
+can't complete a commit because it can't remove `.git/index.lock`):
 
 ```bash
 cd ~/Documents/Dastaan
-rm -f .git/index.lock          # leftover lock from the staging step
-git commit -m "Dastaan salon platform: booking, console, POS, invoicing, loyalty, store"
-git branch -M main
-
-# create an empty repo on github.com/Arbaaz234 first (no README/licence),
-# then:
-git remote add origin https://github.com/Arbaaz234/dastaan.git
-git push -u origin main
+git add -A
+git commit -m "<what changed>"
+git push
 ```
 
 Check before pushing that `git ls-files | grep -E '\.env$|\.db$'` prints
@@ -34,10 +30,10 @@ gitignored.
 ### Portfolio repo + a different Vercel account
 
 These are independent, so **yes, this works**: the code lives on
-`Arbaaz234` (good for your GitHub profile) while the Vercel project sits
+`vectorshift69` (the VectorShift business account) while the Vercel project sits
 under the VectorShift account. When you connect the project, Vercel asks to
-install its GitHub App — install it on the `Arbaaz234` account and grant
-access to the `dastaan` repo. Vercel then builds from that repo regardless
+install its GitHub App — install it on the `vectorshift69` account and grant
+access to the `Dastaan` repo. Vercel then builds from that repo regardless
 of which Vercel account owns the project.
 
 ---
@@ -60,7 +56,7 @@ of which Vercel account owns the project.
 
 ## 3. Web app — Vercel
 
-- **New Project** → import `Arbaaz234/dastaan`
+- **New Project** → import `vectorshift69/Dastaan`
 - **Root directory:** `dastaan-web`
 - Framework preset: Next.js (auto-detected)
 - Environment variable:
@@ -77,13 +73,41 @@ The API is a normal always-on Node service, so its two schedulers (the
 2-hour appointment reminders and the nightly calendar snapshot) keep working
 with no changes.
 
-1. Render → **New** → **Blueprint**, pick the `Arbaaz234/dastaan` repo.
+1. Render → **New** → **Blueprint**, pick the `vectorshift69/Dastaan` repo.
    It reads `dastaan-api/render.yaml`.
-2. Set the secrets it asks for: `DATABASE_URL` (Supabase), `WEB_ORIGINS`
-   (your Vercel URL), `REVIEW_URL`, `GOOGLE_REVIEW_URL`. `JWT_SECRET` and
-   `CODE_PEPPER` are generated for you.
-3. First deploy: open the Render shell and run `npm run seed` once to create
-   the branches, services, staff codes and demo data.
+2. Set the secrets it asks for: `DATABASE_URL` (Supabase), `CODE_PEPPER`,
+   `WEB_ORIGINS` (your Vercel URL), `REVIEW_URL`, `GOOGLE_REVIEW_URL`.
+
+   > **It won't ask for `JWT_SECRET` — that's correct, not a bug.** In
+   > `render.yaml` that one is `generateValue: true`, so Render mints a
+   > strong random value itself and never shows a field for it. It only
+   > signs session cookies, so it never needs to leave Render. The ones it
+   > *does* prompt for are marked `sync: false`, because only you know them.
+   > Never repurpose another variable's slot for it — you'd lose that
+   > variable and gain a duplicate secret. To see or rotate the generated
+   > value: service → **Environment**.
+   >
+   > **`CODE_PEPPER` must match your local `.env` exactly.** It peppers the
+   > HMAC of the 4-digit staff codes, and (see step 3) the seed runs from
+   > your machine — a code hashed with a different pepper will never verify
+   > on the server. Changing it later invalidates every existing staff code.
+   >
+   > `GOOGLE_REVIEW_URL` is the salon's "write a review" link from its
+   > Google Business profile. A placeholder is fine for now; the app only
+   > uses it on the thank-you screen after a 4- or 5-star rating.
+3. Seed the database **from your machine**, once:
+
+   ```bash
+   cd dastaan-api        # .env already points DATABASE_URL at Supabase
+   npm run seed
+   ```
+
+   > Render's Free instances have **no shell and no one-off jobs**, so
+   > `npm run seed:built` on the server isn't an option until you're on a
+   > paid instance. Seeding locally is equivalent — it's the same script
+   > against the same Supabase database. `seed:built` exists for when you do
+   > upgrade (on the server the TypeScript is compiled to `dist/`, so `tsx`
+   > isn't available).
 4. Copy the service URL into Vercel's `API_URL`, then redeploy the web app.
 
 > Render's free instances sleep after ~15 minutes idle and take a few

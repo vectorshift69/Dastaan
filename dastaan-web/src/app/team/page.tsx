@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Logo from "@/components/Logo";
 
 export default function TeamLogin() {
   const router = useRouter();
@@ -82,7 +83,7 @@ export default function TeamLogin() {
       <div className="pointer-events-none fixed top-[-25%] left-1/2 h-[55vh] w-[60vw] -translate-x-1/2 rounded-full bg-gold/5 blur-[110px]" />
 
       <div className="animate-fade-in flex w-full max-w-xs flex-col items-center">
-        <span className="font-display text-3xl font-semibold tracking-[0.28em] text-ivory">DASTAAN</span>
+        <Logo stacked className="text-ivory" markClass="h-16 w-auto" wordClass="h-7 w-auto" />
         <div className="gold-rule mt-4 w-20" />
         <p className="mt-4 text-[11px] tracking-[0.35em] text-ivory/40 uppercase">Team entrance</p>
 

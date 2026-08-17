@@ -23,7 +23,7 @@ export default async function catalogRoutes(app: FastifyInstance) {
     await db.prepare("SELECT id, name, minutes, price, category FROM services WHERE active = 1").all()
   );
 
-  app.get("/stylists", async (req) => {
+  app.get("/barbers", async (req) => {
     const q = req.query as { branchId?: string };
     const rows = q.branchId
       ? await db.prepare(

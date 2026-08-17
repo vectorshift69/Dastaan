@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Logo from "@/components/Logo";
 
 export default function Nav() {
   const [scrolled, setScrolled] = useState(false);
@@ -16,7 +17,7 @@ export default function Nav() {
 
   const links = [
     { href: "/#services", label: "Services" },
-    { href: "/#stylists", label: "Stylists" },
+    { href: "/#barbers", label: "Barbers" },
     { href: "/#branches", label: "Branches" },
     { href: "/store", label: "Store" },
     { href: "/card", label: "Loyalty" },
@@ -29,8 +30,8 @@ export default function Nav() {
       }`}
     >
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
-        <Link href="/" className="font-display text-2xl font-semibold tracking-[0.22em] text-ivory">
-          DASTAAN
+        <Link href="/" aria-label="Dastaan — home" className="text-ivory transition-opacity hover:opacity-80">
+          <Logo markClass="h-8 w-auto" wordClass="h-[21px] w-auto" />
         </Link>
 
         <div className="hidden items-center gap-7 md:flex">

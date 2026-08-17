@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Logo, { LogoWord } from "@/components/Logo";
 
 type Card = {
   tier: "Member" | "Silver" | "Gold";
@@ -53,8 +54,8 @@ export default function LoyaltyCard() {
     <div className="grain flex min-h-svh flex-col items-center bg-ink px-6 py-12">
       <div className="pointer-events-none fixed top-[-20%] left-1/2 h-[55vh] w-[65vw] -translate-x-1/2 rounded-full bg-gold/6 blur-[120px]" />
 
-      <Link href="/" className="font-display text-2xl font-semibold tracking-[0.25em] text-ivory">
-        DASTAAN
+      <Link href="/" aria-label="Dastaan — home" className="text-ivory transition-opacity hover:opacity-80">
+        <Logo markClass="h-8 w-auto" wordClass="h-[21px] w-auto" />
       </Link>
       <p className="eyebrow mt-3">Loyalty card</p>
 
@@ -78,7 +79,7 @@ export default function LoyaltyCard() {
             <div className="absolute -top-16 -right-16 h-48 w-48 rounded-full bg-gold/10 blur-2xl" />
             <div className="flex items-start justify-between">
               <div>
-                <p className="font-display text-lg tracking-[0.2em] text-ivory">DASTAAN</p>
+                <LogoWord className="h-[17px] w-auto text-ivory" />
                 <p className={`mt-0.5 text-[11px] font-bold tracking-[0.3em] uppercase ${TIER_STYLE[card.tier].label}`}>
                   ◆ {card.tier}
                 </p>

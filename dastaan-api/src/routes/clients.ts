@@ -67,7 +67,7 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     const historySql = `
       SELECT b.id, b.starts_at AS "startsAt", b.minutes, b.status, b.paid, b.branch_id AS "branchId",
-             u.name AS stylist, b.service_ids AS "serviceIds"
+             u.name AS barber, b.service_ids AS "serviceIds"
       FROM bookings b LEFT JOIN users u ON u.id = b.barber_id
       WHERE b.client_id = ? ${s.role === "admin" ? "AND b.branch_id = ?" : ""}
       ORDER BY b.starts_at DESC LIMIT 50`;

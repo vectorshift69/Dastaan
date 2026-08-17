@@ -76,8 +76,8 @@ export default async function reviewRoutes(app: FastifyInstance) {
     return { ok: true, rating };
   });
 
-  /* -------- public: a stylist's rating summary + recent comments -------- */
-  app.get("/stylists/:id/reviews", async (req) => {
+  /* -------- public: a barber's rating summary + recent comments -------- */
+  app.get("/barbers/:id/reviews", async (req) => {
     const { id } = req.params as { id: string };
     const summary = await barberRating(id);
     const recent = await db.prepare(

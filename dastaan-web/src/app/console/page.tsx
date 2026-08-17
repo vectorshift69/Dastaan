@@ -10,6 +10,7 @@ import InventoryView from "@/components/console/InventoryView";
 import CouponsView from "@/components/console/CouponsView";
 import OrdersView from "@/components/console/OrdersView";
 import ClientsView from "@/components/console/ClientsView";
+import Logo, { LogoMark } from "@/components/Logo";
 import {
   barbers,
   branches,
@@ -115,9 +116,9 @@ export default function Console() {
     <div className="flex h-svh overflow-hidden bg-paper text-ink">
       {/* ---------- sidebar ---------- */}
       <nav className="flex w-16 shrink-0 flex-col items-center border-r border-black/20 bg-ink py-5 lg:w-56 lg:items-stretch lg:px-4">
-        <Link href="/" className="font-display px-0 text-center text-lg font-semibold tracking-[0.2em] text-ivory lg:text-left">
-          <span className="lg:hidden">D</span>
-          <span className="hidden lg:inline">DASTAAN</span>
+        <Link href="/" aria-label="Dastaan — home" className="flex items-center justify-center text-ivory lg:justify-start">
+          <LogoMark className="h-7 w-auto lg:hidden" />
+          <Logo className="hidden lg:inline-flex" markClass="h-7 w-auto" wordClass="h-[19px] w-auto" />
         </Link>
         <div className="gold-rule mx-auto mt-4 w-8 lg:w-full" />
         <div className="mt-6 flex flex-1 flex-col gap-1.5">

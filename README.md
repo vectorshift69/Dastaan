@@ -76,8 +76,17 @@ npm install && npm run dev                       # :3000
 
 Or `docker compose up --build` from this folder.
 
-**Demo logins** — staff codes `1111` reception · `2222` barber · `9999` owner
-(the code alone signs you in). Client `demo` / `demo1234`. Coupon `WELCOME10`.
+**Demo logins** — staff codes `9999` owner · `1111` reception (Marina Walk) ·
+`1212` reception (City Centre) · `2222`–`7777` and `6161`–`6363` barbers. The
+code alone signs you in. Clients sign in with `demo` / `demo1234`.
+Coupons: `WELCOME10`, `GROOM25`, and `SUMMER15` (expired, to show that state).
+
+`npm run seed` builds a salon that has already been trading: six weeks of
+completed visits with invoices, ~150 clients with honest visit counts, loyalty
+balances carried over from Fresha, ratings on every barber, stock that has
+moved (two lines sit below their reorder point), store orders in every state,
+and a fortnight of archived timeline days. It is deterministic, so a demo can
+be rehearsed.
 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for hosting.
 

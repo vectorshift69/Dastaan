@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import Logo from "@/components/Logo";
 import {
   branches,
   services,
@@ -10,7 +11,7 @@ import {
   type Service,
 } from "@/lib/data";
 
-const STEPS = ["Branch", "Services", "Stylist", "Time"] as const;
+const STEPS = ["Branch", "Services", "Barber", "Time"] as const;
 
 export default function BookingWizard() {
   const [step, setStep] = useState(0);
@@ -59,7 +60,7 @@ export default function BookingWizard() {
           <p className="mt-4 text-sm leading-relaxed text-ivory/55">
             {pickedServices.map((s) => s.name).join(" + ")} · {slot} today
             <br />
-            {b ? `with ${b.name}` : "with the first available stylist"} at {branch?.name}
+            {b ? `with ${b.name}` : "with the first available barber"} at {branch?.name}
           </p>
           <div className="gold-rule mx-auto my-8 w-24" />
           <p className="text-xs leading-relaxed tracking-wider text-ivory/35">
@@ -80,8 +81,8 @@ export default function BookingWizard() {
       {/* header */}
       <header className="border-b border-ivory/10">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 lg:px-10">
-          <Link href="/" className="font-display text-xl font-semibold tracking-[0.22em] text-ivory">
-            DASTAAN
+          <Link href="/" aria-label="Dastaan — home" className="text-ivory transition-opacity hover:opacity-80">
+            <Logo markClass="h-7 w-auto" wordClass="h-[19px] w-auto" />
           </Link>
           <Link href="/" className="text-sm text-ivory/45 hover:text-gold-2">
             Cancel
@@ -187,7 +188,7 @@ export default function BookingWizard() {
 
             {step === 2 && (
               <>
-                <h1 className="font-display text-4xl font-medium text-ivory">Choose your stylist</h1>
+                <h1 className="font-display text-4xl font-medium text-ivory">Choose your barber</h1>
                 <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
                   <button
                     onClick={() => setBarberId("any")}
@@ -264,7 +265,7 @@ export default function BookingWizard() {
                 value={picked.length ? `${picked.length} selected · ${minutes} min` : "—"}
               />
               <SummaryRow
-                label="Stylist"
+                label="Barber"
                 value={
                   barberId === "any"
                     ? "First available"

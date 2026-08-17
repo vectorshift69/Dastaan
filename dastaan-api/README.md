@@ -9,13 +9,19 @@ proxy (`/api/*`).
 ```bash
 cp .env.example .env    # then fill JWT_SECRET and CODE_PEPPER (32+ random chars each)
 npm install
-npm run seed            # demo branches, services, staff, bookings
+npm run seed            # demo branches, services, staff, six weeks of history
 npm run dev             # http://localhost:4000
+
+# production (this is what the host runs)
+npm run build           # tsc → dist/
+npm start               # node dist/index.js
+npm run seed:built      # seed from the compiled output (no tsx needed)
 ```
 
-Demo credentials (seed): staff codes `1111` reception (Admin, Marina Walk) ·
-`2222` Aqib (Barber) · `9999` Owner (Super Admin) · barbers `3333–7777`,
-`6161–6363` · client `demo / demo1234`.
+Demo credentials (seed): staff codes `9999` Imtiaz Dastaan (Super Admin) ·
+`1111` Aisha Rahman (Admin, Marina Walk) · `1212` Noor Siddiqui (Admin, City
+Centre) · barbers `2222`–`7777` and `6161`–`6363` · clients `demo / demo1234`
+(all nine seeded clients share that password).
 
 ## Architecture
 
@@ -146,7 +152,9 @@ spend, usage caps, and validity windows. Staff and clients validate codes
 via `POST /coupons/validate`; the POS checkout accepts `couponCode` (the
 console has an Apply field) and the store checkout does too — amounts are
 always computed server-side and every redemption is logged against its
-invoice or order. Seeded demo code: `WELCOME10` (10% off, min AED 50).
+invoice or order. Seeded demo codes: `WELCOME10` (10% off, min AED 50),
+`GROOM25` (AED 25 off services, min AED 150) and `SUMMER15` (expired and
+deactivated, so the disabled state has something to show).
 
 ## Online store (PRD 12)
 
