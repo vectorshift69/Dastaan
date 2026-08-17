@@ -217,12 +217,22 @@ scoping, audit — then a server-to-server call. Stripe supports the UAE
 (Visa/Mastercard, AED settlement) and Terminal readers (Reader M2 / BBPOS
 Chipper 2X BT) for in-branch charges.
 
+## Database
+
+PostgreSQL everywhere. `DATABASE_URL` set → node-postgres against Supabase
+(or any Postgres). Unset → **PGlite**, a real Postgres compiled to WASM,
+running in-process and persisted to `./data/pg`. Local development needs no
+Docker and no install, and the SQL that runs locally is the SQL that runs in
+production.
+
+Call sites keep writing `?` placeholders; `src/db.ts` rewrites them to
+`$1..$n`. Every query is still a bound prepared statement.
+
 ## Production checklist
 
-1. Swap SQLite → Postgres: reimplement `src/db.ts` with `pg` (same function
-   signatures; all SQL is standard). SQLite is fine for a single branch,
-   Postgres is right once both branches write concurrently.
-2. Put both services behind one domain (e.g. Vercel + Fly/Railway, or one
+1. Point `DATABASE_URL` at Supabase (pooled connection, port 6543, for
+   serverless hosts; direct 5432 for an always-on server).
+2. Put both services behind one domain (e.g. Vercel + Render, or one
    VPS with Caddy): web on `/`, API on `/api`. Set `NODE_ENV=production`,
    `TRUST_PROXY=1`, real `WEB_ORIGINS`.
 3. Rotate `JWT_SECRET`/`CODE_PEPPER` into a secret manager, not files.

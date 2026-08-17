@@ -11,8 +11,8 @@ const GOLD = "#b8912f";
 const GRAY = "#6b6b6b";
 const LIGHT = "#e8e4d8";
 
-export function renderInvoicePdf(inv: ApiInvoice): Promise<Buffer> {
-  const branch = db
+export async function renderInvoicePdf(inv: ApiInvoice):Promise<Promise<Buffer>> {
+  const branch = await db
     .prepare("SELECT name, area, address, phone FROM branches WHERE id = ?")
     .get(inv.branchId) as { name: string; area: string; address: string; phone: string };
 

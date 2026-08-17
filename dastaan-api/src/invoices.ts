@@ -39,8 +39,8 @@ export type Invoice = {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-export function createInvoiceForBooking(bookingId: string, input: InvoiceInput): Invoice {
-  const b = db
+export async function createInvoiceForBooking(bookingId: string, input: InvoiceInput): Promise<Invoice> {
+  const b = await db
     .prepare(
       "SELECT id, branch_id, client_name, client_phone, service_ids FROM bookings WHERE id = ?"
     )
@@ -49,17 +49,18 @@ export function createInvoiceForBooking(bookingId: string, input: InvoiceInput):
     | undefined;
   if (!b) throw Object.assign(new Error("Booking not found"), { statusCode: 404 });
 
-  const existing = db.prepare("SELECT id FROM invoices WHERE booking_id = ?").get(bookingId);
+  const existing = await db.prepare("SELECT id FROM invoices WHERE booking_id = ?").get(bookingId);
   if (existing)
     throw Object.assign(new Error("This booking already has an invoice"), { statusCode: 409 });
 
   const serviceIds = JSON.parse(b.service_ids) as string[];
-  const items = serviceIds.map((sid) => {
-    const s = db.prepare("SELECT name, price FROM services WHERE id = ?").get(sid) as
+  const items: { name: string; price: number }[] = [];
+  for (const sid of serviceIds) {
+    const s = await db.prepare("SELECT name, price FROM services WHERE id = ?").get(sid) as
       | { name: string; price: number }
       | undefined;
-    return { name: s?.name ?? "Service", price: s?.price ?? 0 };
-  });
+    items.push({ name: s?.name ?? "Service", price: Number(s?.price ?? 0) });
+  }
 
   // products appear as their own invoice lines, e.g. "2× Argan Repair Serum"
   const productTotal = (input.productLines ?? []).reduce((sum, p) => sum + p.price * p.qty, 0);
@@ -73,10 +74,10 @@ export function createInvoiceForBooking(bookingId: string, input: InvoiceInput):
   const total = r2(gross + input.tip);
 
   const year = new Date().getFullYear();
-  const invoiceNo = `INV-${year}-${String(nextCounter(`invoice:${year}`)).padStart(5, "0")}`;
+  const invoiceNo = `INV-${year}-${String(await nextCounter(`invoice:${year}`)).padStart(5, "0")}`;
 
   const id = uid();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO invoices (id, invoice_no, booking_id, branch_id, client_name, client_phone,
        items, gross, discount, tip, vat, total, payment_method, issued_by, coupon_code, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`

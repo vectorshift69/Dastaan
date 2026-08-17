@@ -50,7 +50,7 @@ async function callPaymentService(path: string, body: unknown) {
 }
 
 /** Never let a payment-service failure surface as a 500 with no context. */
-function replyServiceError(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, err: unknown) {
+async function replyServiceError(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, err: unknown) {
   const e = err instanceof ServiceError ? err : new ServiceError("Payment failed", 502);
   reply.code(e.status).send({ error: e.message });
 }
@@ -58,7 +58,7 @@ function replyServiceError(reply: { code: (n: number) => { send: (b: unknown) =>
 export default async function paymentRoutes(app: FastifyInstance) {
   /* -------- online: create a Payment Intent for a store order -------- */
   app.post("/payments/intent", async (req, reply) => {
-    const s = requireAuth(req, reply);
+    const s = await requireAuth(req, reply);
     if (!s) return;
     if (!paymentsEnabled(reply, "online")) return;
 
@@ -66,7 +66,7 @@ export default async function paymentRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
 
     if (parsed.data.orderId) {
-      const o = db.prepare("SELECT id, client_id, total, status FROM orders WHERE id = ?").get(parsed.data.orderId) as
+      const o = await db.prepare("SELECT id, client_id, total, status FROM orders WHERE id = ?").get(parsed.data.orderId) as
         | { id: string; client_id: string; total: number; status: string } | undefined;
       if (!o) return reply.code(404).send({ error: "Order not found" });
       if (s.role === "client" && o.client_id !== s.sub) return reply.code(403).send({ error: "Not allowed" });
@@ -78,10 +78,10 @@ export default async function paymentRoutes(app: FastifyInstance) {
           amount: Math.round(o.total * 100), // minor units
           currency: config.payments.currency,
         });
-        audit("payment_intent_created", { actorId: s.sub, actorRole: s.role, detail: `order:${o.id}`, ip: req.ip });
+        await audit("payment_intent_created", { actorId: s.sub, actorRole: s.role, detail: `order:${o.id}`, ip: req.ip });
         return result;
       } catch (err) {
-        return replyServiceError(reply, err);
+        return await replyServiceError(reply, err);
       }
     }
 
@@ -90,14 +90,14 @@ export default async function paymentRoutes(app: FastifyInstance) {
 
   /* -------- terminal: charge a card reader at the front desk -------- */
   app.post("/payments/terminal", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     if (!paymentsEnabled(reply, "terminal")) return;
 
     const parsed = terminalSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
 
-    const b = db.prepare("SELECT id, branch_id FROM bookings WHERE id = ?").get(parsed.data.bookingId) as
+    const b = await db.prepare("SELECT id, branch_id FROM bookings WHERE id = ?").get(parsed.data.bookingId) as
       | { id: string; branch_id: string } | undefined;
     if (!b) return reply.code(404).send({ error: "Booking not found" });
     if (s.role === "admin" && b.branch_id !== s.branchId) return reply.code(403).send({ error: "Wrong branch" });
@@ -110,23 +110,23 @@ export default async function paymentRoutes(app: FastifyInstance) {
         branchId: b.branch_id,
         readerId: parsed.data.readerId,
       });
-      audit("terminal_charge_started", { actorId: s.sub, actorRole: s.role, detail: `booking:${b.id}`, ip: req.ip });
+      await audit("terminal_charge_started", { actorId: s.sub, actorRole: s.role, detail: `booking:${b.id}`, ip: req.ip });
       return result;
     } catch (err) {
-      return replyServiceError(reply, err);
+      return await replyServiceError(reply, err);
     }
   });
 
   /* -------- readers available at a branch (for the POS picker) -------- */
   app.get("/payments/readers", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     if (!paymentsEnabled(reply, "terminal")) return;
     const branchId = s.role === "admin" ? s.branchId : (req.query as { branchId?: string }).branchId;
     try {
       return await callPaymentService("/terminal/readers", { branchId });
     } catch (err) {
-      return replyServiceError(reply, err);
+      return await replyServiceError(reply, err);
     }
   });
 }

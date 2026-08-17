@@ -24,7 +24,7 @@ const app = Fastify({
   bodyLimit: 64 * 1024, // 64 KB is plenty for JSON APIs
 });
 
-migrate();
+await migrate();
 
 await app.register(helmet); // security headers
 await app.register(cookie); // httpOnly session cookie parsing
@@ -36,7 +36,7 @@ await app.register(rateLimit, {
 
 /* CSRF defence: SameSite=Lax cookie + Origin allow-list on mutations */
 app.addHook("onRequest", async (req, reply) => {
-  if (!originGuard(req, reply)) return reply;
+  if (!await originGuard(req, reply)) return reply;
 });
 
 /* no stack traces or internals ever leave the server */
@@ -65,7 +65,7 @@ await app.register(reviewRoutes);
 await app.register(clientRoutes);
 await app.register(paymentRoutes);
 
-startScheduler(); // delivers queued SMS (confirmations, 2h reminders, feedback)
+await startScheduler(); // delivers queued SMS (confirmations, 2h reminders, feedback)
 
 // PRD 13: archive each day's calendar state when the date rolls over
 const snapshotTimer = setInterval(snapshotIfDayRolled, 60_000);

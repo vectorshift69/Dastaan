@@ -12,9 +12,9 @@ const scanSchema = z.object({ token: z.string().min(8).max(80) });
 export default async function loyaltyRoutes(app: FastifyInstance) {
   /* -------- client: my loyalty card -------- */
   app.get("/loyalty/me", async (req, reply) => {
-    const s = requireRole(req, reply, ["client"]);
+    const s = await requireRole(req, reply, ["client"]);
     if (!s) return;
-    const acc = ensureAccount(s.sub);
+    const acc = await ensureAccount(s.sub);
     return {
       tier: acc.tier,
       points: acc.points,
@@ -29,9 +29,9 @@ export default async function loyaltyRoutes(app: FastifyInstance) {
 
   /* QR as SVG — crisp on any screen, and dense enough for webcam scanning */
   app.get("/loyalty/me/qr.svg", async (req, reply) => {
-    const s = requireRole(req, reply, ["client"]);
+    const s = await requireRole(req, reply, ["client"]);
     if (!s) return;
-    const acc = ensureAccount(s.sub);
+    const acc = await ensureAccount(s.sub);
     const svg = await QRCode.toString(QR_PREFIX + acc.qrToken, {
       type: "svg",
       errorCorrectionLevel: "M", // tolerant of screen glare for webcam scans
@@ -43,27 +43,27 @@ export default async function loyaltyRoutes(app: FastifyInstance) {
 
   /* -------- POS: staff scans a client's phone screen -------- */
   app.post("/loyalty/scan", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const parsed = scanSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid scan" });
     const token = parsed.data.token.replace(QR_PREFIX, "").trim();
-    const acc = findByToken(token);
+    const acc = await findByToken(token);
     if (!acc) return reply.code(404).send({ error: "Card not recognised" });
-    audit("loyalty_scanned", { actorId: s.sub, actorRole: s.role, detail: acc.clientId, ip: req.ip });
+    await audit("loyalty_scanned", { actorId: s.sub, actorRole: s.role, detail: acc.clientId, ip: req.ip });
     return {
       clientName: acc.clientName,
       clientPhone: acc.clientPhone,
       tier: acc.tier,
       points: acc.points,
       lifetimePoints: acc.lifetimePoints,
-      recent: recentTransactions(acc.id, 5),
+      recent: await recentTransactions(acc.id, 5),
     };
   });
 
   /* -------- Apple Wallet pass (activates when certificates are configured) -------- */
   app.get("/loyalty/me/wallet.pkpass", async (req, reply) => {
-    const s = requireRole(req, reply, ["client"]);
+    const s = await requireRole(req, reply, ["client"]);
     if (!s) return;
 
     const certPath = process.env.APPLE_PASS_CERT;      // signerCert.pem
@@ -79,7 +79,7 @@ export default async function loyaltyRoutes(app: FastifyInstance) {
       });
     }
 
-    const acc = ensureAccount(s.sub);
+    const acc = await ensureAccount(s.sub);
     const { PKPass } = await import("passkit-generator");
     const pass = new PKPass(
       {},

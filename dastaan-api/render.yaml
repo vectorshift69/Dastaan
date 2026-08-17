@@ -1,0 +1,44 @@
+# Render blueprint for the API. Import the repo in Render and point it at
+# this file (root directory: dastaan-api).
+#
+# The API is a persistent server, not serverless: the notification outbox
+# (2-hour appointment reminders) and the nightly calendar snapshot are
+# in-process schedulers that need a process that stays alive.
+services:
+  - type: web
+    name: dastaan-api
+    runtime: node
+    plan: free # free instances sleep when idle — reminders resume on next request
+    region: frankfurt # closest Render region to the UAE
+    rootDir: dastaan-api
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      # Supabase pooled connection string
+      - key: DATABASE_URL
+        sync: false
+      # generate: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CODE_PEPPER
+        generateValue: true
+      # the deployed web app's origin(s), comma separated
+      - key: WEB_ORIGINS
+        sync: false
+      # notifications — console until Twilio/WhatsApp is connected
+      - key: SMS_PROVIDER
+        value: console
+      - key: REVIEW_URL
+        sync: false
+      - key: GOOGLE_REVIEW_URL
+        sync: false
+      # payments stay off until the payment service is deployed
+      - key: PAYMENTS_ENABLED
+        value: "0"

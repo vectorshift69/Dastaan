@@ -37,14 +37,14 @@ const STATUS_FLOW: Record<string, string[]> = {
 export default async function storeRoutes(app: FastifyInstance) {
   /* -------- storefront: public browse (retail products only) -------- */
   app.get("/store/products", async () =>
-    db.prepare(
+    await db.prepare(
       "SELECT id, name, category, price FROM products WHERE kind = 'retail' AND active = 1 ORDER BY category, name"
     ).all()
   );
 
   /* -------- place an order (clients) -------- */
   app.post("/store/orders", async (req, reply) => {
-    const s = requireRole(req, reply, ["client"]);
+    const s = await requireRole(req, reply, ["client"]);
     if (!s) return;
     const parsed = orderSchema.safeParse(req.body);
     if (!parsed.success)
@@ -53,7 +53,7 @@ export default async function storeRoutes(app: FastifyInstance) {
     // price everything server-side from the catalog — client prices are never trusted
     const items: { productId: string; name: string; qty: number; price: number }[] = [];
     for (const line of parsed.data.items) {
-      const p = db.prepare(
+      const p = await db.prepare(
         "SELECT id, name, price FROM products WHERE id = ? AND kind = 'retail' AND active = 1"
       ).get(line.productId) as { id: string; name: string; price: number } | undefined;
       if (!p) return reply.code(400).send({ error: "A product in your cart is unavailable" });
@@ -65,7 +65,7 @@ export default async function storeRoutes(app: FastifyInstance) {
     let couponId: string | null = null;
     const code = parsed.data.couponCode?.trim();
     if (code) {
-      const check = checkCoupon(code, subtotal, "products");
+      const check = await checkCoupon(code, subtotal, "products");
       if (!check.ok) return reply.code(422).send({ error: check.reason });
       discount = check.discount;
       couponId = check.coupon.id;
@@ -74,16 +74,16 @@ export default async function storeRoutes(app: FastifyInstance) {
     const gross = r2(Math.max(0, subtotal - discount));
     const vat = r2((gross * VAT_RATE) / (1 + VAT_RATE));
     const year = new Date().getFullYear();
-    const orderNo = `ORD-${year}-${String(nextCounter(`order:${year}`)).padStart(5, "0")}`;
+    const orderNo = `ORD-${year}-${String(await nextCounter(`order:${year}`)).padStart(5, "0")}`;
 
     const id = uid();
-    db.prepare(
+    await db.prepare(
       `INSERT INTO orders (id, order_no, client_id, items, subtotal, discount, coupon_code, vat, total, fulfil_branch_id, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(id, orderNo, s.sub, JSON.stringify(items), subtotal, discount, code ? code.toUpperCase() : null, vat, gross, STORE_BRANCH, now(), now());
 
-    if (couponId) redeemCoupon(couponId, `order:${id}`, discount, s.sub);
-    audit("order_placed", { actorId: s.sub, actorRole: s.role, detail: orderNo, ip: req.ip });
+    if (couponId) await redeemCoupon(couponId, `order:${id}`, discount, s.sub);
+    await audit("order_placed", { actorId: s.sub, actorRole: s.role, detail: orderNo, ip: req.ip });
 
     /* Payments go/no-go: with the flag off the order is simply reserved and
        paid for in branch. With it on, the client is handed off to the
@@ -99,11 +99,11 @@ export default async function storeRoutes(app: FastifyInstance) {
 
   /* -------- my orders (clients) / all orders (SUPER ADMIN ONLY) -------- */
   app.get("/store/orders", async (req, reply) => {
-    const s = requireRole(req, reply, ["client", "super_admin"]); // admins & barbers never see store sales (PRD 12.1)
+    const s = await requireRole(req, reply, ["client", "super_admin"]); // admins & barbers never see store sales (PRD 12.1)
     if (!s) return;
     const rows = s.role === "client"
-      ? db.prepare("SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC LIMIT 50").all(s.sub)
-      : db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 200").all();
+      ? await db.prepare("SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC LIMIT 50").all(s.sub)
+      : await db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 200").all();
     return (rows as Record<string, unknown>[]).map((o) => ({
       id: o.id, orderNo: o.order_no, items: JSON.parse(o.items as string),
       subtotal: o.subtotal, discount: o.discount, couponCode: o.coupon_code,
@@ -114,28 +114,28 @@ export default async function storeRoutes(app: FastifyInstance) {
 
   /* -------- order lifecycle (SUPER ADMIN ONLY) -------- */
   app.patch("/store/orders/:id/status", async (req, reply) => {
-    const s = requireRole(req, reply, ["super_admin"]);
+    const s = await requireRole(req, reply, ["super_admin"]);
     if (!s) return;
     const { id } = req.params as { id: string };
     const parsed = z.object({ status: z.enum(["paid", "fulfilled", "cancelled"]) }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid status" });
 
-    const o = db.prepare("SELECT status, items, fulfil_branch_id FROM orders WHERE id = ?").get(id) as
+    const o = await db.prepare("SELECT status, items, fulfil_branch_id FROM orders WHERE id = ?").get(id) as
       | { status: string; items: string; fulfil_branch_id: string }
       | undefined;
     if (!o) return reply.code(404).send({ error: "Order not found" });
     if (!STATUS_FLOW[o.status]?.includes(parsed.data.status))
       return reply.code(409).send({ error: `Cannot go from ${o.status} to ${parsed.data.status}` });
 
-    db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(parsed.data.status, now(), id);
+    await db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(parsed.data.status, now(), id);
 
     // fulfilment draws stock from the fulfilment branch, logged like any movement
     if (parsed.data.status === "fulfilled") {
       for (const item of JSON.parse(o.items) as { productId: string; qty: number }[]) {
-        moveStock(item.productId, o.fulfil_branch_id, -item.qty, "online_sale", s.sub, `order ${id}`);
+        await moveStock(item.productId, o.fulfil_branch_id, -item.qty, "online_sale", s.sub, `order ${id}`);
       }
     }
-    audit("order_status_changed", { actorId: s.sub, actorRole: s.role, detail: `${id} → ${parsed.data.status}`, ip: req.ip });
+    await audit("order_status_changed", { actorId: s.sub, actorRole: s.role, detail: `${id} → ${parsed.data.status}`, ip: req.ip });
     return { ok: true };
   });
 }

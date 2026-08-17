@@ -1,27 +1,133 @@
 /* ------------------------------------------------------------------ */
-/* Data layer — node:sqlite with prepared statements ONLY.             */
-/* Every query is parameterized: no string interpolation of user input */
-/* ever reaches SQL. To move to Postgres in production, this file is   */
-/* the single swap point (same function signatures, pg client inside). */
+/* Data layer — PostgreSQL.                                            */
+/*                                                                     */
+/*   production  DATABASE_URL set  → Supabase / any Postgres (node-pg)  */
+/*   local dev   no DATABASE_URL   → PGlite, real Postgres in-process,  */
+/*                                   persisted to ./data. No Docker.    */
+/*                                                                     */
+/* Both speak the same SQL, so what runs locally is what runs live.     */
+/*                                                                     */
+/* Every query is parameterised. Call sites keep writing `?` and this   */
+/* layer rewrites them to $1..$n, so no SQL was rewritten by hand       */
+/* during the SQLite → Postgres migration.                             */
 /* ------------------------------------------------------------------ */
 
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
-const DB_PATH = process.env.DB_PATH || "./data/dastaan.db";
-mkdirSync(dirname(DB_PATH), { recursive: true });
-
-export const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
 
 export const uid = () => randomUUID();
 export const now = () => new Date().toISOString();
 
-export function migrate() {
-  db.exec(`
+type Row = Record<string, unknown>;
+interface Driver {
+  query(sql: string, params: unknown[]): Promise<{ rows: Row[]; rowCount: number }>;
+  exec(sql: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+/* ---- ? → $1..$n (leaves ?? and quoted text alone) ---- */
+function toPgPlaceholders(sql: string): string {
+  let i = 0;
+  let out = "";
+  let inSingle = false;
+  for (let c = 0; c < sql.length; c++) {
+    const ch = sql[c]!;
+    if (ch === "'") inSingle = !inSingle;
+    if (ch === "?" && !inSingle) {
+      out += `$${++i}`;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+let driver: Driver;
+
+async function makeDriver(): Promise<Driver> {
+  const url = process.env.DATABASE_URL;
+
+  if (url) {
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({
+      connectionString: url,
+      // Supabase and most managed Postgres require TLS
+      ssl: url.includes("localhost") || url.includes("127.0.0.1")
+        ? undefined
+        : { rejectUnauthorized: false },
+      max: Number(process.env.PG_POOL_MAX ?? 10),
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    });
+    return {
+      async query(sql, params) {
+        const r = await pool.query(toPgPlaceholders(sql), params);
+        return { rows: r.rows as Row[], rowCount: r.rowCount ?? 0 };
+      },
+      async exec(sql) { await pool.query(sql); },
+      async close() { await pool.end(); },
+    };
+  }
+
+  // local dev / tests — embedded Postgres, persisted to disk
+  const dir = process.env.PGLITE_DIR ?? "./data/pg";
+  mkdirSync(dir, { recursive: true });
+  const { PGlite } = await import("@electric-sql/pglite");
+  const lite = await PGlite.create(dir);
+  return {
+    async query(sql, params) {
+      const r = await lite.query(toPgPlaceholders(sql), params as unknown[]);
+      return { rows: (r.rows ?? []) as Row[], rowCount: r.affectedRows ?? (r.rows?.length ?? 0) };
+    },
+    async exec(sql) { await lite.exec(sql); },
+    async close() { await lite.close(); },
+  };
+}
+
+export async function connect() {
+  if (!driver) driver = await makeDriver();
+  return driver;
+}
+
+export async function closeDb() {
+  if (driver) await driver.close();
+}
+
+/* ------------------------------------------------------------------ */
+/* Query helpers — same shape the codebase already used, now async.    */
+/*   db.prepare(sql).get(...)  → first row or undefined                */
+/*   db.prepare(sql).all(...)  → rows                                  */
+/*   db.prepare(sql).run(...)  → { changes }                           */
+/* ------------------------------------------------------------------ */
+
+export const db = {
+  prepare(sql: string) {
+    return {
+      async get<T = Row>(...params: unknown[]): Promise<T | undefined> {
+        const r = await (await connect()).query(sql, params);
+        return r.rows[0] as T | undefined;
+      },
+      async all<T = Row>(...params: unknown[]): Promise<T[]> {
+        const r = await (await connect()).query(sql, params);
+        return r.rows as T[];
+      },
+      async run(...params: unknown[]): Promise<{ changes: number }> {
+        const r = await (await connect()).query(sql, params);
+        return { changes: r.rowCount };
+      },
+    };
+  },
+  async exec(sql: string) {
+    await (await connect()).exec(sql);
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* Schema                                                              */
+/* ------------------------------------------------------------------ */
+
+export async function migrate() {
+  await db.exec(`
   CREATE TABLE IF NOT EXISTS branches (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -43,13 +149,13 @@ export function migrate() {
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     role TEXT NOT NULL CHECK (role IN ('super_admin','admin','barber','client')),
-    user_id TEXT UNIQUE,               -- client login id (null for staff)
+    user_id TEXT UNIQUE,
     name TEXT NOT NULL,
     phone TEXT,
     title TEXT,
     branch_id TEXT REFERENCES branches(id),
-    password_hash TEXT,                -- clients (bcrypt)
-    code_hmac TEXT UNIQUE,             -- staff 4-digit code (HMAC-SHA256 + server pepper)
+    password_hash TEXT,
+    code_hmac TEXT UNIQUE,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
   );
@@ -61,8 +167,8 @@ export function migrate() {
     client_id TEXT REFERENCES users(id),
     client_name TEXT NOT NULL,
     client_phone TEXT,
-    service_ids TEXT NOT NULL,         -- JSON array (validated by zod before insert)
-    starts_at TEXT NOT NULL,           -- ISO datetime
+    service_ids TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
     minutes INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'Booked'
       CHECK (status IN ('Booked','Confirmed','Arrived','Started','No Show','Cancelled')),
@@ -100,8 +206,8 @@ export function migrate() {
     name TEXT NOT NULL,
     sku TEXT UNIQUE,
     category TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('retail','supply')), -- retail = sellable, supply = in-salon use
-    price REAL NOT NULL DEFAULT 0,     -- retail price (VAT-inclusive); 0 for supplies
+    kind TEXT NOT NULL CHECK (kind IN ('retail','supply')),
+    price REAL NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
   );
@@ -110,7 +216,7 @@ export function migrate() {
     product_id TEXT NOT NULL REFERENCES products(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     qty INTEGER NOT NULL DEFAULT 0,
-    reorder_at INTEGER NOT NULL DEFAULT 5, -- low-stock alert threshold
+    reorder_at INTEGER NOT NULL DEFAULT 5,
     PRIMARY KEY (product_id, branch_id)
   );
 
@@ -128,12 +234,12 @@ export function migrate() {
 
   CREATE TABLE IF NOT EXISTS coupons (
     id TEXT PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,         -- stored uppercase
+    code TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL CHECK (type IN ('percent','fixed')),
     value REAL NOT NULL,
     scope TEXT NOT NULL CHECK (scope IN ('services','products','both')),
     min_amount REAL NOT NULL DEFAULT 0,
-    max_uses INTEGER,                  -- null = unlimited
+    max_uses INTEGER,
     uses INTEGER NOT NULL DEFAULT 0,
     valid_from TEXT,
     valid_to TEXT,
@@ -144,7 +250,7 @@ export function migrate() {
   CREATE TABLE IF NOT EXISTS coupon_redemptions (
     id TEXT PRIMARY KEY,
     coupon_id TEXT NOT NULL REFERENCES coupons(id),
-    context TEXT NOT NULL,             -- invoice:<id> or order:<id>
+    context TEXT NOT NULL,
     amount_saved REAL NOT NULL,
     client_id TEXT,
     created_at TEXT NOT NULL
@@ -152,10 +258,10 @@ export function migrate() {
 
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
-    order_no TEXT NOT NULL UNIQUE,     -- ORD-<year>-#####
+    order_no TEXT NOT NULL UNIQUE,
     client_id TEXT NOT NULL REFERENCES users(id),
-    items TEXT NOT NULL,               -- JSON [{productId, name, qty, price}]
-    subtotal REAL NOT NULL,            -- VAT-inclusive, before discount
+    items TEXT NOT NULL,
+    subtotal REAL NOT NULL,
     discount REAL NOT NULL DEFAULT 0,
     coupon_code TEXT,
     vat REAL NOT NULL,
@@ -174,19 +280,19 @@ export function migrate() {
     branch_id TEXT NOT NULL REFERENCES branches(id),
     client_id TEXT REFERENCES users(id),
     client_name TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE,        -- single-use link sent in the feedback SMS
+    token TEXT NOT NULL UNIQUE,
     rating INTEGER CHECK (rating BETWEEN 1 AND 5),
     comment TEXT,
-    submitted_at TEXT,                 -- null until the client responds
+    submitted_at TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_reviews_barber ON reviews (barber_id, submitted_at);
 
   CREATE TABLE IF NOT EXISTS day_snapshots (
     id TEXT PRIMARY KEY,
-    date TEXT NOT NULL,                -- YYYY-MM-DD
+    date TEXT NOT NULL,
     branch_id TEXT NOT NULL REFERENCES branches(id),
-    data TEXT NOT NULL,                -- JSON: full booking state for that day
+    data TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE (date, branch_id)
   );
@@ -194,9 +300,9 @@ export function migrate() {
   CREATE TABLE IF NOT EXISTS loyalty_accounts (
     id TEXT PRIMARY KEY,
     client_id TEXT NOT NULL UNIQUE REFERENCES users(id),
-    qr_token TEXT NOT NULL UNIQUE,     -- random 128-bit; the QR payload
-    points INTEGER NOT NULL DEFAULT 0, -- spendable balance
-    lifetime_points INTEGER NOT NULL DEFAULT 0, -- drives tier
+    qr_token TEXT NOT NULL UNIQUE,
+    points INTEGER NOT NULL DEFAULT 0,
+    lifetime_points INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   );
 
@@ -212,25 +318,26 @@ export function migrate() {
 
   CREATE TABLE IF NOT EXISTS invoices (
     id TEXT PRIMARY KEY,
-    invoice_no TEXT NOT NULL UNIQUE,   -- e.g. INV-2026-00042 (sequential per year)
+    invoice_no TEXT NOT NULL UNIQUE,
     booking_id TEXT NOT NULL UNIQUE REFERENCES bookings(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     client_name TEXT NOT NULL,
     client_phone TEXT,
-    items TEXT NOT NULL,               -- JSON [{name, price}]
-    gross REAL NOT NULL,               -- service total after discount (VAT-inclusive)
+    items TEXT NOT NULL,
+    gross REAL NOT NULL,
     discount REAL NOT NULL DEFAULT 0,
     tip REAL NOT NULL DEFAULT 0,
-    vat REAL NOT NULL,                 -- 5% UAE VAT contained in gross
-    total REAL NOT NULL,               -- gross + tip = amount paid
+    vat REAL NOT NULL,
+    total REAL NOT NULL,
     payment_method TEXT NOT NULL,
     issued_by TEXT REFERENCES users(id),
+    coupon_code TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_invoices_branch ON invoices (branch_id, created_at);
 
   CREATE TABLE IF NOT EXISTS counters (
-    key TEXT PRIMARY KEY,              -- e.g. invoice:2026
+    key TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0
   );
 
@@ -240,7 +347,7 @@ export function migrate() {
     to_phone TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('confirmation','reminder','feedback','cancellation','invoice')),
     body TEXT NOT NULL,
-    scheduled_at TEXT NOT NULL,        -- ISO; send at/after this time
+    scheduled_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
       CHECK (status IN ('pending','sent','failed','cancelled')),
     attempts INTEGER NOT NULL DEFAULT 0,
@@ -252,22 +359,11 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_notifications_booking ON notifications (booking_id);
 
   CREATE TABLE IF NOT EXISTS login_attempts (
-    key TEXT PRIMARY KEY,              -- e.g. team:<ip> or client:<ip>:<userId>
+    key TEXT PRIMARY KEY,
     count INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT
   );
   `);
-
-  // idempotent column additions for databases created before these features
-  safeAlter("ALTER TABLE invoices ADD COLUMN coupon_code TEXT");
-}
-
-function safeAlter(sql: string) {
-  try {
-    db.exec(sql);
-  } catch {
-    /* column already exists */
-  }
 }
 
 /* ---------------- lockout helpers (persistent, per key) ------------- */
@@ -275,41 +371,43 @@ function safeAlter(sql: string) {
 const LOCK_BASE_SECONDS = 60;
 const MAX_FREE_ATTEMPTS = 5;
 
-export function checkLock(key: string): number {
-  const row = db
+export async function checkLock(key: string): Promise<number> {
+  const row = await db
     .prepare("SELECT locked_until FROM login_attempts WHERE key = ?")
-    .get(key) as { locked_until: string | null } | undefined;
+    .get<{ locked_until: string | null }>(key);
   if (!row?.locked_until) return 0;
   const remaining = Math.ceil((Date.parse(row.locked_until) - Date.now()) / 1000);
   return remaining > 0 ? remaining : 0;
 }
 
-export function recordFailure(key: string): number {
-  const row = db
+export async function recordFailure(key: string): Promise<number> {
+  const row = await db
     .prepare("SELECT count FROM login_attempts WHERE key = ?")
-    .get(key) as { count: number } | undefined;
-  const count = (row?.count ?? 0) + 1;
+    .get<{ count: number }>(key);
+  const count = Number(row?.count ?? 0) + 1;
   let lockedUntil: string | null = null;
   if (count >= MAX_FREE_ATTEMPTS) {
     // escalating lockout: 60s, 120s, 240s ... capped at 15 min
     const factor = Math.min(2 ** (count - MAX_FREE_ATTEMPTS), 15);
     lockedUntil = new Date(Date.now() + LOCK_BASE_SECONDS * factor * 1000).toISOString();
   }
-  db.prepare(
+  await db.prepare(
     `INSERT INTO login_attempts (key, count, locked_until) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET count = excluded.count, locked_until = excluded.locked_until`
+     ON CONFLICT(key) DO UPDATE SET count = EXCLUDED.count, locked_until = EXCLUDED.locked_until`
   ).run(key, count, lockedUntil);
   return lockedUntil ? checkLock(key) : 0;
 }
 
-export function clearFailures(key: string) {
-  db.prepare("DELETE FROM login_attempts WHERE key = ?").run(key);
+export async function clearFailures(key: string) {
+  await db.prepare("DELETE FROM login_attempts WHERE key = ?").run(key);
 }
 
-/* atomic sequential counter (invoice numbers) */
-export function nextCounter(key: string): number {
-  db.prepare(
-    "INSERT INTO counters (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1"
-  ).run(key);
-  return (db.prepare("SELECT value FROM counters WHERE key = ?").get(key) as { value: number }).value;
+/* atomic sequential counter (invoice / order numbers) */
+export async function nextCounter(key: string): Promise<number> {
+  const row = await db.prepare(
+    `INSERT INTO counters (key, value) VALUES (?, 1)
+     ON CONFLICT(key) DO UPDATE SET value = counters.value + 1
+     RETURNING value`
+  ).get<{ value: number }>(key);
+  return Number(row!.value);
 }

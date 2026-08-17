@@ -50,8 +50,8 @@ type BookingRow = {
   cancel_reason: string | null;
 };
 
-const toApi = (b: BookingRow) => {
-  const loyalty = b.client_id ? loyaltyForClient(b.client_id) : null;
+const toApi = async (b: BookingRow) => {
+  const loyalty = b.client_id ? await loyaltyForClient(b.client_id) : null;
   return {
     id: b.id,
     branchId: b.branch_id,
@@ -69,8 +69,8 @@ const toApi = (b: BookingRow) => {
   };
 };
 
-function logEvent(bookingId: string, actorId: string | null, actorRole: string | null, action: string, detail?: string) {
-  db.prepare(
+async function logEvent(bookingId: string, actorId: string | null, actorRole: string | null, action: string, detail?: string) {
+  await db.prepare(
     "INSERT INTO booking_events (id, booking_id, actor_id, actor_role, action, detail, created_at) VALUES (?,?,?,?,?,?,?)"
   ).run(uid(), bookingId, actorId, actorRole, action, detail ?? null, now());
 }
@@ -78,15 +78,15 @@ function logEvent(bookingId: string, actorId: string | null, actorRole: string |
 export default async function bookingRoutes(app: FastifyInstance) {
   /* -------- list bookings (role-scoped) -------- */
   app.get("/bookings", async (req, reply) => {
-    const s = requireAuth(req, reply);
+    const s = await requireAuth(req, reply);
     if (!s) return;
     const q = req.query as { date?: string; branchId?: string };
 
     if (s.role === "client") {
-      const rows = db
+      const rows = await db
         .prepare("SELECT * FROM bookings WHERE client_id = ? ORDER BY starts_at DESC LIMIT 100")
         .all(s.sub) as BookingRow[];
-      return rows.map(toApi);
+      return Promise.all(rows.map(toApi));
     }
 
     const date = q.date && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : new Date().toISOString().slice(0, 10);
@@ -94,25 +94,25 @@ export default async function bookingRoutes(app: FastifyInstance) {
     const to = `${date}T23:59:59`;
 
     if (s.role === "barber") {
-      const rows = db
+      const rows = await db
         .prepare("SELECT * FROM bookings WHERE barber_id = ? AND starts_at BETWEEN ? AND ? ORDER BY starts_at")
         .all(s.sub, from, to) as BookingRow[];
-      return rows.map(toApi);
+      return Promise.all(rows.map(toApi));
     }
 
     // admin: own branch only; super_admin: any branch (optional filter)
     const branchId = s.role === "admin" ? s.branchId : (q.branchId ?? null);
     const rows = branchId
-      ? (db.prepare("SELECT * FROM bookings WHERE branch_id = ? AND starts_at BETWEEN ? AND ? ORDER BY starts_at")
+      ? (await db.prepare("SELECT * FROM bookings WHERE branch_id = ? AND starts_at BETWEEN ? AND ? ORDER BY starts_at")
           .all(branchId, from, to) as BookingRow[])
-      : (db.prepare("SELECT * FROM bookings WHERE starts_at BETWEEN ? AND ? ORDER BY starts_at")
+      : (await db.prepare("SELECT * FROM bookings WHERE starts_at BETWEEN ? AND ? ORDER BY starts_at")
           .all(from, to) as BookingRow[]);
-    return rows.map(toApi);
+    return Promise.all(rows.map(toApi));
   });
 
   /* -------- create booking (client self-serve or staff) -------- */
   app.post("/bookings", async (req, reply) => {
-    const s = requireAuth(req, reply);
+    const s = await requireAuth(req, reply);
     if (!s) return;
     if (s.role === "barber") return reply.code(403).send({ error: "Barbers cannot create bookings" });
 
@@ -124,41 +124,45 @@ export default async function bookingRoutes(app: FastifyInstance) {
     if (s.role === "admin" && body.branchId !== s.branchId)
       return reply.code(403).send({ error: "Wrong branch" });
 
-    const branch = db.prepare("SELECT id FROM branches WHERE id = ?").get(body.branchId);
+    const branch = await db.prepare("SELECT id FROM branches WHERE id = ?").get(body.branchId);
     if (!branch) return reply.code(400).send({ error: "Unknown branch" });
 
     // services must exist & be active
-    const services = body.serviceIds.map(
-      (id) => db.prepare("SELECT id, minutes FROM services WHERE id = ? AND active = 1").get(id) as { id: string; minutes: number } | undefined
-    );
+    const services: ({ id: string; minutes: number } | undefined)[] = [];
+    for (const sid of body.serviceIds) {
+      services.push(await db.prepare("SELECT id, minutes FROM services WHERE id = ? AND active = 1").get(sid) as { id: string; minutes: number } | undefined);
+    }
     if (services.some((x) => !x)) return reply.code(400).send({ error: "Unknown service" });
     const minutes = services.reduce((sum, x) => sum + x!.minutes, 0);
 
     // resolve barber ("any" → first free in branch)
     let barberId = body.barberId;
-    const branchBarbers = db
+    const branchBarbers = await db
       .prepare("SELECT id FROM users WHERE branch_id = ? AND role IN ('barber','admin') AND role = 'barber' AND active = 1")
       .all(body.branchId) as { id: string }[];
     if (barberId === "any") {
-      const free = branchBarbers.find((b) => !overlaps(b.id, body.startsAt, minutes));
+      let free: { id: string } | undefined;
+      for (const cand of branchBarbers) {
+        if (!(await overlaps(cand.id, body.startsAt, minutes))) { free = cand; break; }
+      }
       if (!free) return reply.code(409).send({ error: "No stylist free at that time" });
       barberId = free.id;
     } else {
       if (!branchBarbers.some((b) => b.id === barberId))
         return reply.code(400).send({ error: "Stylist not at this branch" });
-      if (overlaps(barberId, body.startsAt, minutes))
+      if (await overlaps(barberId, body.startsAt, minutes))
         return reply.code(409).send({ error: "That time was just taken — pick another slot" });
     }
 
     const isClient = s.role === "client";
     const clientRow = isClient
-      ? (db.prepare("SELECT name, phone FROM users WHERE id = ?").get(s.sub) as { name: string; phone: string | null })
+      ? (await db.prepare("SELECT name, phone FROM users WHERE id = ?").get(s.sub) as { name: string; phone: string | null })
       : null;
     const clientName = isClient ? clientRow!.name : body.clientName;
     if (!clientName) return reply.code(400).send({ error: "Client name required" });
 
     const id = uid();
-    db.prepare(
+    await db.prepare(
       `INSERT INTO bookings (id, branch_id, barber_id, client_id, client_name, client_phone,
         service_ids, starts_at, minutes, status, online, paid, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,'Booked',?,0,?,?)`
@@ -171,22 +175,22 @@ export default async function bookingRoutes(app: FastifyInstance) {
       isClient || body.online ? 1 : 0,
       now(), now()
     );
-    logEvent(id, s.sub, s.role, "created");
-    onBookingCreated(id); // instant SMS confirmation + 2h-before reminder (PRD 5.4)
-    drainDue().catch(() => {}); // deliver the confirmation right away
+    await logEvent(id, s.sub, s.role, "created");
+    await onBookingCreated(id); // instant SMS confirmation + 2h-before reminder (PRD 5.4)
+    await drainDue().catch(() => {}); // deliver the confirmation right away
     return reply.code(201).send({ id, barberId, minutes });
   });
 
   /* -------- status pipeline (staff only; Cancel requires reason) -------- */
   app.patch("/bookings/:id/status", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const { id } = req.params as { id: string };
     const parsed = statusSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid status" });
     const { status, reason } = parsed.data;
 
-    const b = db.prepare("SELECT * FROM bookings WHERE id = ?").get(id) as BookingRow | undefined;
+    const b = await db.prepare("SELECT * FROM bookings WHERE id = ?").get(id) as BookingRow | undefined;
     if (!b) return reply.code(404).send({ error: "Booking not found" });
     if (s.role === "admin" && b.branch_id !== s.branchId)
       return reply.code(403).send({ error: "Wrong branch" });
@@ -194,50 +198,50 @@ export default async function bookingRoutes(app: FastifyInstance) {
     if (status === "Cancelled" && !reason?.trim())
       return reply.code(400).send({ error: "A cancellation reason is required" });
 
-    db.prepare("UPDATE bookings SET status = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
+    await db.prepare("UPDATE bookings SET status = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
       .run(status, status === "Cancelled" ? reason!.trim() : b.cancel_reason, now(), id);
-    logEvent(id, s.sub, s.role, `status:${status}`, status === "Cancelled" ? reason : undefined);
-    audit("booking_status_changed", { actorId: s.sub, actorRole: s.role, detail: `${id} → ${status}`, ip: req.ip });
+    await logEvent(id, s.sub, s.role, `status:${status}`, status === "Cancelled" ? reason : undefined);
+    await audit("booking_status_changed", { actorId: s.sub, actorRole: s.role, detail: `${id} → ${status}`, ip: req.ip });
     if (status === "Cancelled") {
-      onBookingCancelled(id); // notify client + void the pending reminder
-      drainDue().catch(() => {});
+      await onBookingCancelled(id); // notify client + void the pending reminder
+      await drainDue().catch(() => {});
     }
     return { ok: true };
   });
 
   /* -------- payment flag (staff only) -------- */
   app.patch("/bookings/:id/paid", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const { id } = req.params as { id: string };
     const parsed = paidSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid input" });
 
-    const b = db.prepare("SELECT branch_id FROM bookings WHERE id = ?").get(id) as { branch_id: string } | undefined;
+    const b = await db.prepare("SELECT branch_id FROM bookings WHERE id = ?").get(id) as { branch_id: string } | undefined;
     if (!b) return reply.code(404).send({ error: "Booking not found" });
     if (s.role === "admin" && b.branch_id !== s.branchId)
       return reply.code(403).send({ error: "Wrong branch" });
 
-    db.prepare("UPDATE bookings SET paid = ?, updated_at = ? WHERE id = ?").run(parsed.data.paid ? 1 : 0, now(), id);
-    logEvent(id, s.sub, s.role, `paid:${parsed.data.paid}`);
-    audit("booking_paid_changed", { actorId: s.sub, actorRole: s.role, detail: id, ip: req.ip });
+    await db.prepare("UPDATE bookings SET paid = ?, updated_at = ? WHERE id = ?").run(parsed.data.paid ? 1 : 0, now(), id);
+    await logEvent(id, s.sub, s.role, `paid:${parsed.data.paid}`);
+    await audit("booking_paid_changed", { actorId: s.sub, actorRole: s.role, detail: id, ip: req.ip });
     if (parsed.data.paid) {
-      onServicePaid(id); // post-service feedback request (in-app + Google review)
-      drainDue().catch(() => {});
+      await onServicePaid(id); // post-service feedback request (in-app + Google review)
+      await drainDue().catch(() => {});
     }
     return { ok: true };
   });
 
   /* -------- checkout: pay + auto-invoice + SMS, one atomic action (PRD 9 & 11) -------- */
   app.post("/bookings/:id/checkout", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const { id } = req.params as { id: string };
     const parsed = checkoutSchema.safeParse(req.body);
     if (!parsed.success)
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
 
-    const b = db.prepare("SELECT branch_id, status FROM bookings WHERE id = ?").get(id) as
+    const b = await db.prepare("SELECT branch_id, status FROM bookings WHERE id = ?").get(id) as
       | { branch_id: string; status: string }
       | undefined;
     if (!b) return reply.code(404).send({ error: "Booking not found" });
@@ -249,11 +253,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
     // products sold at the desk — priced from the catalog, stock checked
     const productLines: { productId: string; name: string; qty: number; price: number }[] = [];
     for (const line of parsed.data.products ?? []) {
-      const p = db.prepare(
+      const p = await db.prepare(
         "SELECT id, name, price FROM products WHERE id = ? AND kind = 'retail' AND active = 1"
       ).get(line.productId) as { id: string; name: string; price: number } | undefined;
       if (!p) return reply.code(400).send({ error: "Unknown product" });
-      const stock = db.prepare(
+      const stock = await db.prepare(
         "SELECT qty FROM stock_levels WHERE product_id = ? AND branch_id = ?"
       ).get(line.productId, b.branch_id) as { qty: number } | undefined;
       if (!stock || stock.qty < line.qty)
@@ -267,13 +271,13 @@ export default async function bookingRoutes(app: FastifyInstance) {
     let couponId: string | null = null;
     const couponCode = parsed.data.couponCode?.trim();
     if (couponCode) {
-      const check = checkCoupon(couponCode, Math.max(0, parsed.data.price + productTotal - parsed.data.discount), "services");
+      const check = await checkCoupon(couponCode, Math.max(0, parsed.data.price + productTotal - parsed.data.discount), "services");
       if (!check.ok) return reply.code(422).send({ error: check.reason });
       couponDiscount = check.discount;
       couponId = check.coupon.id;
     }
 
-    const invoice = createInvoiceForBooking(id, {
+    const invoice = await createInvoiceForBooking(id, {
       ...parsed.data,
       issuedBy: s.sub,
       couponCode: couponCode ? couponCode.toUpperCase() : null,
@@ -283,46 +287,46 @@ export default async function bookingRoutes(app: FastifyInstance) {
 
     // draw the sold products out of this branch's stock, logged as pos_sale
     for (const p of productLines) {
-      moveStock(p.productId, b.branch_id, -p.qty, "pos_sale", s.sub, `invoice ${invoice.invoiceNo}`);
+      await moveStock(p.productId, b.branch_id, -p.qty, "pos_sale", s.sub, `invoice ${invoice.invoiceNo}`);
     }
 
     if (couponId) {
-      const owner0 = db.prepare("SELECT client_id FROM bookings WHERE id = ?").get(id) as { client_id: string | null };
-      redeemCoupon(couponId, `invoice:${invoice.id}`, couponDiscount, owner0.client_id);
+      const owner0 = await db.prepare("SELECT client_id FROM bookings WHERE id = ?").get(id) as { client_id: string | null };
+      await redeemCoupon(couponId, `invoice:${invoice.id}`, couponDiscount, owner0.client_id);
     }
 
-    db.prepare("UPDATE bookings SET paid = 1, status = 'Started', updated_at = ? WHERE id = ?").run(now(), id);
-    logEvent(id, s.sub, s.role, "checkout", `${invoice.invoiceNo} · AED ${invoice.total}`);
-    audit("checkout_completed", { actorId: s.sub, actorRole: s.role, detail: `${id} ${invoice.invoiceNo}`, ip: req.ip });
+    await db.prepare("UPDATE bookings SET paid = 1, status = 'Started', updated_at = ? WHERE id = ?").run(now(), id);
+    await logEvent(id, s.sub, s.role, "checkout", `${invoice.invoiceNo} · AED ${invoice.total}`);
+    await audit("checkout_completed", { actorId: s.sub, actorRole: s.role, detail: `${id} ${invoice.invoiceNo}`, ip: req.ip });
 
-    onInvoiceIssued(id, invoice.invoiceNo, invoice.total, invoice.paymentMethod);
-    onServicePaid(id, createReviewInvite(id)); // feedback request with a single-use rating link
-    drainDue().catch(() => {});
+    await onInvoiceIssued(id, invoice.invoiceNo, invoice.total, invoice.paymentMethod);
+    await onServicePaid(id, await createReviewInvite(id)); // feedback request with a single-use rating link
+    await drainDue().catch(() => {});
 
     // loyalty: registered clients earn 1 point per AED of the service total
-    const owner = db.prepare("SELECT client_id FROM bookings WHERE id = ?").get(id) as { client_id: string | null };
-    const pointsEarned = owner.client_id ? earnPoints(owner.client_id, id, invoice.gross) : 0;
+    const owner = await db.prepare("SELECT client_id FROM bookings WHERE id = ?").get(id) as { client_id: string | null };
+    const pointsEarned = owner.client_id ? await earnPoints(owner.client_id, id, invoice.gross) : 0;
 
     return reply.code(201).send({ ...invoice, pointsEarned });
   });
 
   /* -------- invoices (staff, branch-scoped) -------- */
   app.get("/invoices", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const q = req.query as { branchId?: string };
     const branchId = s.role === "admin" ? s.branchId : (q.branchId ?? null);
     const rows = branchId
-      ? db.prepare("SELECT * FROM invoices WHERE branch_id = ? ORDER BY created_at DESC LIMIT 200").all(branchId)
-      : db.prepare("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 200").all();
+      ? await db.prepare("SELECT * FROM invoices WHERE branch_id = ? ORDER BY created_at DESC LIMIT 200").all(branchId)
+      : await db.prepare("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 200").all();
     return (rows as Parameters<typeof invoiceToApi>[0][]).map(invoiceToApi);
   });
 
   /* shared loader with per-role authorization */
-  const loadInvoiceAuthorized = (req: Parameters<typeof requireAuth>[0], reply: Parameters<typeof requireAuth>[1], bookingId: string) => {
-    const s = requireAuth(req, reply);
+  const loadInvoiceAuthorized = async (req: Parameters<typeof requireAuth>[0], reply: Parameters<typeof requireAuth>[1], bookingId: string) => {
+    const s = await requireAuth(req, reply);
     if (!s) return null;
-    const row = db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(bookingId) as
+    const row = await db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(bookingId) as
       | Parameters<typeof invoiceToApi>[0]
       | undefined;
     if (!row) {
@@ -330,7 +334,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
       return null;
     }
     if (s.role === "client") {
-      const owns = db.prepare("SELECT id FROM bookings WHERE id = ? AND client_id = ?").get(bookingId, s.sub);
+      const owns = await db.prepare("SELECT id FROM bookings WHERE id = ? AND client_id = ?").get(bookingId, s.sub);
       if (!owns) { reply.code(403).send({ error: "Not allowed" }); return null; }
     }
     if (s.role === "admin" && row.branch_id !== s.branchId) {
@@ -342,14 +346,14 @@ export default async function bookingRoutes(app: FastifyInstance) {
   };
 
   app.get("/bookings/:id/invoice", async (req, reply) => {
-    const inv = loadInvoiceAuthorized(req, reply, (req.params as { id: string }).id);
+    const inv = await loadInvoiceAuthorized(req, reply, (req.params as { id: string }).id);
     if (!inv) return;
     return inv;
   });
 
   /* downloadable PDF of the invoice */
   app.get("/bookings/:id/invoice/pdf", async (req, reply) => {
-    const inv = loadInvoiceAuthorized(req, reply, (req.params as { id: string }).id);
+    const inv = await loadInvoiceAuthorized(req, reply, (req.params as { id: string }).id);
     if (!inv) return;
     const pdf = await renderInvoicePdf(inv);
     reply
@@ -360,24 +364,24 @@ export default async function bookingRoutes(app: FastifyInstance) {
 
   /* -------- notification outbox (staff visibility) -------- */
   app.get("/notifications", async (req, reply) => {
-    const s = requireRole(req, reply, ["admin", "super_admin"]);
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const q = req.query as { bookingId?: string };
     if (q.bookingId) {
-      return db
+      return await db
         .prepare(
-          "SELECT id, booking_id AS bookingId, kind, body, status, scheduled_at AS scheduledAt, sent_at AS sentAt FROM notifications WHERE booking_id = ? ORDER BY created_at DESC"
+          `SELECT id, booking_id AS "bookingId", kind, body, status, scheduled_at AS "scheduledAt", sent_at AS "sentAt" FROM notifications WHERE booking_id = ? ORDER BY created_at DESC`
         )
         .all(q.bookingId);
     }
     // admins see their branch's messages; super admin sees all
     const rows =
       s.role === "super_admin"
-        ? db.prepare(
-            "SELECT n.id, n.booking_id AS bookingId, n.kind, n.body, n.status, n.scheduled_at AS scheduledAt, n.sent_at AS sentAt FROM notifications n ORDER BY n.created_at DESC LIMIT 100"
+        ? await db.prepare(
+            `SELECT n.id, n.booking_id AS "bookingId", n.kind, n.body, n.status, n.scheduled_at AS "scheduledAt", n.sent_at AS "sentAt" FROM notifications n ORDER BY n.created_at DESC LIMIT 100`
           ).all()
-        : db.prepare(
-            `SELECT n.id, n.booking_id AS bookingId, n.kind, n.body, n.status, n.scheduled_at AS scheduledAt, n.sent_at AS sentAt
+        : await db.prepare(
+            `SELECT n.id, n.booking_id AS "bookingId", n.kind, n.body, n.status, n.scheduled_at AS "scheduledAt", n.sent_at AS "sentAt"
              FROM notifications n JOIN bookings b ON b.id = n.booking_id
              WHERE b.branch_id = ? ORDER BY n.created_at DESC LIMIT 100`
           ).all(s.branchId);
@@ -386,12 +390,12 @@ export default async function bookingRoutes(app: FastifyInstance) {
 }
 
 /* overlap: same barber, existing active booking intersecting the window */
-function overlaps(barberId: string, startsAt: string, minutes: number): boolean {
+async function overlaps(barberId: string, startsAt: string, minutes: number): Promise<boolean> {
   const start = Date.parse(startsAt);
   const end = start + minutes * 60_000;
   const dayStart = new Date(start); dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(start); dayEnd.setHours(23, 59, 59, 999);
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT starts_at, minutes FROM bookings
        WHERE barber_id = ? AND status NOT IN ('Cancelled','No Show')

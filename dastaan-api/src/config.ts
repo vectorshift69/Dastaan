@@ -46,7 +46,7 @@ export const publicConfig = () => ({
   },
 });
 
-/** Guard for any route that would move money. Mirrors requireRole():
+/** Guard for any route that would move money. Mirrors await requireRole():
     replies 503 and returns false when payments are switched off. */
 export function paymentsEnabled(
   reply: { code: (n: number) => { send: (b: unknown) => unknown } },

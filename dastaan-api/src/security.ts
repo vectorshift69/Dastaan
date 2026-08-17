@@ -49,7 +49,7 @@ export const safeEqualHex = (a: string, b: string) => {
 };
 
 /* ---- session cookie (JWT, httpOnly) ---- */
-export function issueSession(reply: FastifyReply, s: Session) {
+export async function issueSession(reply: FastifyReply, s: Session) {
   const token = jwt.sign(s, JWT_SECRET!, {
     expiresIn: `${SESSION_HOURS}h`,
     issuer: "dastaan-api",
@@ -63,11 +63,11 @@ export function issueSession(reply: FastifyReply, s: Session) {
   });
 }
 
-export function clearSession(reply: FastifyReply) {
+export async function clearSession(reply: FastifyReply) {
   reply.clearCookie(COOKIE_NAME, { path: "/" });
 }
 
-export function readSession(req: FastifyRequest): Session | null {
+export async function readSession(req: FastifyRequest): Promise<Session | null> {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return null;
   try {
@@ -78,8 +78,8 @@ export function readSession(req: FastifyRequest): Session | null {
 }
 
 /* ---- guards ---- */
-export function requireAuth(req: FastifyRequest, reply: FastifyReply): Session | null {
-  const s = readSession(req);
+export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Promise<Session | null> {
+  const s = await readSession(req);
   if (!s) {
     reply.code(401).send({ error: "Not signed in" });
     return null;
@@ -87,12 +87,12 @@ export function requireAuth(req: FastifyRequest, reply: FastifyReply): Session |
   return s;
 }
 
-export function requireRole(
+export async function requireRole(
   req: FastifyRequest,
   reply: FastifyReply,
   roles: Role[]
-): Session | null {
-  const s = requireAuth(req, reply);
+): Promise<Session | null> {
+  const s = await requireAuth(req, reply);
   if (!s) return null;
   if (!roles.includes(s.role)) {
     reply.code(403).send({ error: "Not allowed" });
@@ -107,7 +107,7 @@ const ALLOWED_ORIGINS = (process.env.WEB_ORIGINS || "http://localhost:3000")
   .split(",")
   .map((s) => s.trim());
 
-export function originGuard(req: FastifyRequest, reply: FastifyReply): boolean {
+export async function originGuard(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
   const origin = req.headers.origin;
   if (!origin) return true; // non-browser clients; cookie theft not possible via CSRF without a browser
@@ -117,11 +117,11 @@ export function originGuard(req: FastifyRequest, reply: FastifyReply): boolean {
 }
 
 /* ---- audit ---- */
-export function audit(
+export async function audit(
   action: string,
   opts: { actorId?: string | null; actorRole?: string | null; detail?: string; ip?: string }
 ) {
-  db.prepare(
+  await db.prepare(
     "INSERT INTO audit_log (id, actor_id, actor_role, action, detail, ip, created_at) VALUES (?,?,?,?,?,?,?)"
   ).run(uid(), opts.actorId ?? null, opts.actorRole ?? null, action, opts.detail ?? null, opts.ip ?? null, now());
 }

@@ -2,7 +2,7 @@
 import { db, migrate, uid, now } from "./db.js";
 import { hmacCode, hashPassword } from "./security.js";
 
-migrate();
+await migrate();
 
 const branches = [
   ["b1", "Dastaan — Marina Walk", "Dubai Marina", "Marina Walk, Tower 4, Ground Floor", "Daily 10:00 – 23:00", "+971 4 000 0001"],
@@ -66,33 +66,33 @@ const bookings: [string, string, string, string[], string, number, string, numbe
 ];
 
 const run = async () => {
-  const existing = db.prepare("SELECT COUNT(*) AS n FROM branches").get() as { n: number };
+  const existing = await db.prepare("SELECT COUNT(*) AS n FROM branches").get() as { n: number };
   if (existing.n > 0) {
     console.log("Already seeded — delete data/dastaan.db to reseed.");
     return;
   }
 
   for (const b of branches)
-    db.prepare("INSERT INTO branches (id,name,area,address,hours,phone) VALUES (?,?,?,?,?,?)").run(...b);
+    await db.prepare("INSERT INTO branches (id,name,area,address,hours,phone) VALUES (?,?,?,?,?,?)").run(...b);
   for (const s of services)
-    db.prepare("INSERT INTO services (id,name,minutes,price,category) VALUES (?,?,?,?,?)").run(...s);
+    await db.prepare("INSERT INTO services (id,name,minutes,price,category) VALUES (?,?,?,?,?)").run(...s);
   for (const [id, name, title, branch, code, role] of staff)
-    db.prepare("INSERT INTO users (id,role,name,title,branch_id,code_hmac,created_at) VALUES (?,?,?,?,?,?,?)")
+    await db.prepare("INSERT INTO users (id,role,name,title,branch_id,code_hmac,created_at) VALUES (?,?,?,?,?,?,?)")
       .run(id, role, name, title, branch, hmacCode(code), now());
 
   const demoId = uid();
-  db.prepare("INSERT INTO users (id,role,user_id,name,phone,password_hash,created_at) VALUES (?,?,?,?,?,?,?)")
+  await db.prepare("INSERT INTO users (id,role,user_id,name,phone,password_hash,created_at) VALUES (?,?,?,?,?,?,?)")
     .run(demoId, "client", "demo", "Demo Client", "+971 50 000 0000", await hashPassword("demo1234"), now());
   // demo loyalty: Gold tier with history
   const accId = uid();
-  db.prepare("INSERT INTO loyalty_accounts (id, client_id, qr_token, points, lifetime_points, created_at) VALUES (?,?,?,?,?,?)")
+  await db.prepare("INSERT INTO loyalty_accounts (id, client_id, qr_token, points, lifetime_points, created_at) VALUES (?,?,?,?,?,?)")
     .run(accId, demoId, "demotoken00000000000000000000000", 5800, 5800, now());
-  db.prepare("INSERT INTO points_transactions (id, account_id, delta, reason, created_at) VALUES (?,?,?,?,?)")
+  await db.prepare("INSERT INTO points_transactions (id, account_id, delta, reason, created_at) VALUES (?,?,?,?,?)")
     .run(uid(), accId, 5800, "migration_from_fresha", now());
 
   for (const [barber, client, phone, svc, start, minutes, status, online, paid] of bookings) {
-    const branch = (db.prepare("SELECT branch_id FROM users WHERE id = ?").get(barber) as { branch_id: string }).branch_id;
-    db.prepare(
+    const branch = (await db.prepare("SELECT branch_id FROM users WHERE id = ?").get(barber) as { branch_id: string }).branch_id;
+    await db.prepare(
       `INSERT INTO bookings (id,branch_id,barber_id,client_name,client_phone,service_ids,starts_at,minutes,status,online,paid,created_at,updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(uid(), branch, barber, client, phone, JSON.stringify(svc), at(start), minutes, status, online, paid, now(), now());
@@ -111,15 +111,15 @@ const run = async () => {
     ["p9", "Colour Developer 6%", null as unknown as string, "Colour bar", "supply", 0],
   ];
   for (const [id, name, sku, category, kind, price] of products)
-    db.prepare("INSERT INTO products (id,name,sku,category,kind,price,created_at) VALUES (?,?,?,?,?,?,?)")
+    await db.prepare("INSERT INTO products (id,name,sku,category,kind,price,created_at) VALUES (?,?,?,?,?,?,?)")
       .run(id, name, sku, category, kind, price, now());
   for (const [id] of products)
     for (const b of ["b1", "b2"])
-      db.prepare("INSERT INTO stock_levels (product_id, branch_id, qty, reorder_at) VALUES (?,?,?,?)")
+      await db.prepare("INSERT INTO stock_levels (product_id, branch_id, qty, reorder_at) VALUES (?,?,?,?)")
         .run(id, b, 12, 5);
 
   // starter coupon: 10% off anything, max 100 uses
-  db.prepare(
+  await db.prepare(
     "INSERT INTO coupons (id, code, type, value, scope, min_amount, max_uses, created_at) VALUES (?,?,?,?,?,?,?,?)"
   ).run(uid(), "WELCOME10", "percent", 10, "both", 50, 100, now());
 

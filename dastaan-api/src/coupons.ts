@@ -16,12 +16,12 @@ export type CouponCheck =
   | { ok: false; reason: string };
 
 /* Validate a code against an amount + context. Returns the discount. */
-export function checkCoupon(
+export async function checkCoupon(
   code: string,
   amount: number,
   context: "services" | "products"
-): CouponCheck {
-  const c = db
+): Promise<CouponCheck> {
+  const c = await db
     .prepare("SELECT * FROM coupons WHERE code = ?")
     .get(code.trim().toUpperCase()) as CouponRow | undefined;
   if (!c || !c.active) return { ok: false, reason: "Code not recognised" };
@@ -40,14 +40,14 @@ export function checkCoupon(
 }
 
 /* Record a successful redemption (call only after the sale is committed). */
-export function redeemCoupon(
+export async function redeemCoupon(
   couponId: string,
   context: string, // invoice:<id> | order:<id>
   amountSaved: number,
   clientId: string | null
 ) {
-  db.prepare("UPDATE coupons SET uses = uses + 1 WHERE id = ?").run(couponId);
-  db.prepare(
+  await db.prepare("UPDATE coupons SET uses = uses + 1 WHERE id = ?").run(couponId);
+  await db.prepare(
     "INSERT INTO coupon_redemptions (id, coupon_id, context, amount_saved, client_id, created_at) VALUES (?,?,?,?,?,?)"
   ).run(uid(), couponId, context, amountSaved, clientId, now());
 }
