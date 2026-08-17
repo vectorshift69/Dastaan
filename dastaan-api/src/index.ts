@@ -1,3 +1,4 @@
+import "./load-env.js"; // MUST be first — populates process.env before other modules read it
 import Fastify from "fastify";
 import helmet from "@fastify/helmet";
 import cookie from "@fastify/cookie";

@@ -1,4 +1,5 @@
 /* Demo seed — run once: npm run seed */
+import "./load-env.js"; // MUST be first
 import { db, migrate, uid, now } from "./db.js";
 import { hmacCode, hashPassword } from "./security.js";
 
@@ -68,7 +69,7 @@ const bookings: [string, string, string, string[], string, number, string, numbe
 const run = async () => {
   const existing = await db.prepare("SELECT COUNT(*) AS n FROM branches").get() as { n: number };
   if (existing.n > 0) {
-    console.log("Already seeded — delete data/dastaan.db to reseed.");
+    console.log("Already seeded — this database already has data. To start over, drop the tables (Supabase → SQL Editor) and run again.");
     return;
   }
 
