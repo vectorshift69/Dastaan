@@ -110,6 +110,63 @@ export default async function bookingRoutes(app: FastifyInstance) {
     return Promise.all(rows.map(toApi));
   });
 
+  /* ------------------------------------------------------------------ */
+  /* Which slots are actually free.                                      */
+  /*                                                                     */
+  /* Public on purpose: someone choosing a time has not signed in yet.    */
+  /* It gives away nothing but "busy" or "free" — no client names, no     */
+  /* service, no phone number.                                           */
+  /* ------------------------------------------------------------------ */
+  app.get("/availability", async (req, reply) => {
+    const q = req.query as { branchId?: string; barberId?: string; date?: string; minutes?: string };
+    if (!q.branchId) return reply.code(400).send({ error: "branchId required" });
+    if (!q.date || !/^\d{4}-\d{2}-\d{2}$/.test(q.date))
+      return reply.code(400).send({ error: "date=YYYY-MM-DD required" });
+
+    const minutes = Math.min(600, Math.max(5, Number(q.minutes) || 30));
+    const branch = await db.prepare("SELECT hours FROM branches WHERE id = ?").get(q.branchId) as
+      | { hours: string } | undefined;
+    if (!branch) return reply.code(404).send({ error: "Unknown branch" });
+
+    /* Trading hours come from the branch record, e.g. "Daily 10:00 – 23:00". */
+    const hrs = branch.hours.match(/(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
+    const openMin = hrs ? Number(hrs[1]) * 60 + Number(hrs[2]) : 10 * 60;
+    const closeMin = hrs ? Number(hrs[3]) * 60 + Number(hrs[4]) : 22 * 60;
+
+    const barbers = await db
+      .prepare("SELECT id, name FROM users WHERE branch_id = ? AND role = 'barber' AND active = 1 ORDER BY name")
+      .all(q.branchId) as { id: string; name: string }[];
+
+    const wanted = q.barberId && q.barberId !== "any"
+      ? barbers.filter((b) => b.id === q.barberId)
+      : barbers;
+    if (wanted.length === 0) return reply.code(404).send({ error: "Unknown barber for this branch" });
+
+    /* one lookup per chair, then every slot is answered from memory */
+    const busyByBarber = new Map<string, Busy[]>();
+    for (const b of wanted) busyByBarber.set(b.id, await busyRanges(b.id, q.date));
+
+    const STEP = 15; // quarter-hour grid
+    const slots: { time: string; available: boolean }[] = [];
+    for (let m = openMin; m + minutes <= closeMin; m += STEP) {
+      const free = wanted.some((b) => !clashes(busyByBarber.get(b.id)!, m, minutes));
+      slots.push({
+        time: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
+        available: free,
+      });
+    }
+
+    return {
+      date: q.date,
+      branchId: q.branchId,
+      barberId: q.barberId ?? "any",
+      minutes,
+      opens: `${String(Math.floor(openMin / 60)).padStart(2, "0")}:${String(openMin % 60).padStart(2, "0")}`,
+      closes: `${String(Math.floor(closeMin / 60)).padStart(2, "0")}:${String(closeMin % 60).padStart(2, "0")}`,
+      slots,
+    };
+  });
+
   /* -------- create booking (client self-serve or staff) -------- */
   app.post("/bookings", async (req, reply) => {
     const s = await requireAuth(req, reply);
@@ -389,22 +446,48 @@ export default async function bookingRoutes(app: FastifyInstance) {
   });
 }
 
-/* overlap: same barber, existing active booking intersecting the window */
-async function overlaps(barberId: string, startsAt: string, minutes: number): Promise<boolean> {
-  const start = Date.parse(startsAt);
-  const end = start + minutes * 60_000;
-  const dayStart = new Date(start); dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(start); dayEnd.setHours(23, 59, 59, 999);
+/* ------------------------------------------------------------------ */
+/* Chair availability.                                                 */
+/*                                                                     */
+/* Booking times are naive salon-local strings — "2026-08-18T10:15:00", */
+/* no timezone. So all the arithmetic here stays in that frame: the day */
+/* is matched on the date prefix, and the clash test is done in minutes */
+/* from midnight. Never Date.parse() these, and never compare them      */
+/* against toISOString() — that mixes a local wall clock with a UTC     */
+/* instant and the result shifts with wherever the server happens to    */
+/* be running.                                                         */
+/* ------------------------------------------------------------------ */
+
+const dayOf = (startsAt: string) => startsAt.slice(0, 10);
+/** "2026-08-18T10:15:00" → 615 */
+const minutesOfDay = (startsAt: string) => {
+  const h = Number(startsAt.slice(11, 13));
+  const m = Number(startsAt.slice(14, 16));
+  return h * 60 + m;
+};
+
+type Busy = { from: number; to: number };
+
+/** Everything already in a barber's chair on one day, as minute ranges. */
+async function busyRanges(barberId: string, date: string): Promise<Busy[]> {
   const rows = await db
     .prepare(
       `SELECT starts_at, minutes FROM bookings
        WHERE barber_id = ? AND status NOT IN ('Cancelled','No Show')
-       AND starts_at BETWEEN ? AND ?`
+         AND starts_at >= ? AND starts_at < ?`
     )
-    .all(barberId, dayStart.toISOString(), dayEnd.toISOString()) as { starts_at: string; minutes: number }[];
-  return rows.some((r) => {
-    const s = Date.parse(r.starts_at);
-    const e = s + r.minutes * 60_000;
-    return start < e && s < end;
+    .all(barberId, `${date}T00:00`, `${date}T99`) as { starts_at: string; minutes: number }[];
+  return rows.map((r) => {
+    const from = minutesOfDay(r.starts_at);
+    return { from, to: from + Number(r.minutes) };
   });
+}
+
+const clashes = (busy: Busy[], from: number, minutes: number) =>
+  busy.some((b) => from < b.to && b.from < from + minutes);
+
+/* overlap: same barber, existing active booking intersecting the window */
+async function overlaps(barberId: string, startsAt: string, minutes: number): Promise<boolean> {
+  const busy = await busyRanges(barberId, dayOf(startsAt));
+  return clashes(busy, minutesOfDay(startsAt), minutes);
 }

@@ -32,7 +32,14 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 /* ---------------- dates ---------------- */
 
 const TODAY = new Date();
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+/* Local calendar date, deliberately NOT toISOString().slice(0,10).
+   Booking times are stored as naive local strings ("2026-08-18T10:15:00") and
+   the console asks for the operator's local date, so the seed has to think in
+   the same frame. Using UTC meant a seed run after 20:00 Dubai / 05:30 IST
+   landed the whole dataset on the previous day — today's board showed up as
+   yesterday and the calendar looked nearly empty. */
+const isoDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const dayOffset = (n: number) => {
   const d = new Date(TODAY);
   d.setDate(d.getDate() + n);
