@@ -10,12 +10,14 @@ proxy (`/api/*`).
 cp .env.example .env    # then fill JWT_SECRET and CODE_PEPPER (32+ random chars each)
 npm install
 npm run seed            # demo branches, services, staff, six weeks of history
+npm run seed:reset      # clear and rebuild it — safe to re-run any time
 npm run dev             # http://localhost:4000
 
 # production (this is what the host runs)
 npm run build           # tsc → dist/
 npm start               # node dist/index.js
 npm run seed:built      # seed from the compiled output (no tsx needed)
+npm run seed:built:reset
 ```
 
 Demo credentials (seed): staff codes `9999` Imtiaz Dastaan (Super Admin) ·

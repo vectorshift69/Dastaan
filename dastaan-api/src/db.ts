@@ -23,6 +23,11 @@ interface Driver {
   query(sql: string, params: unknown[]): Promise<{ rows: Row[]; rowCount: number }>;
   exec(sql: string): Promise<void>;
   close(): Promise<void>;
+  /* Runs `fn` inside a single transaction on a single pinned connection.
+     Without this, every statement through the pool auto-commits on whatever
+     connection it happens to get — so a long write (the seed) is neither
+     atomic nor fast, and an interruption leaves the database half-written. */
+  transaction<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 /* ---- ? → $1..$n (leaves ?? and quoted text alone) ---- */
@@ -59,13 +64,34 @@ async function makeDriver(): Promise<Driver> {
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
     });
+    /* While a transaction is open, every query must ride the same
+       connection — otherwise BEGIN lands on one and the inserts on others. */
+    let pinned: import("pg").PoolClient | null = null;
+
     return {
       async query(sql, params) {
-        const r = await pool.query(toPgPlaceholders(sql), params);
+        const r = await (pinned ?? pool).query(toPgPlaceholders(sql), params);
         return { rows: r.rows as Row[], rowCount: r.rowCount ?? 0 };
       },
-      async exec(sql) { await pool.query(sql); },
+      async exec(sql) { await (pinned ?? pool).query(sql); },
       async close() { await pool.end(); },
+      async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        if (pinned) return await fn(); // already inside one — don't nest
+        const client = await pool.connect();
+        pinned = client;
+        try {
+          await client.query("BEGIN");
+          const result = await fn();
+          await client.query("COMMIT");
+          return result;
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw err;
+        } finally {
+          pinned = null;
+          client.release();
+        }
+      },
     };
   }
 
@@ -81,6 +107,18 @@ async function makeDriver(): Promise<Driver> {
     },
     async exec(sql) { await lite.exec(sql); },
     async close() { await lite.close(); },
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+      // PGlite is a single in-process connection, so plain BEGIN/COMMIT is enough
+      await lite.exec("BEGIN");
+      try {
+        const result = await fn();
+        await lite.exec("COMMIT");
+        return result;
+      } catch (err) {
+        await lite.exec("ROLLBACK").catch(() => {});
+        throw err;
+      }
+    },
   };
 }
 
@@ -120,7 +158,20 @@ export const db = {
   async exec(sql: string) {
     await (await connect()).exec(sql);
   },
+  /* All-or-nothing. Used by the seed so an interrupted run leaves an empty
+     database rather than a plausible-looking partial one. */
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    return await (await connect()).transaction(fn);
+  },
 };
+
+/* Every table the app owns, child-first — used by the seed's --reset. */
+export const APP_TABLES = [
+  "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
+  "coupon_redemptions", "coupons", "stock_movements", "stock_levels", "products",
+  "invoices", "notifications", "booking_events", "bookings", "login_attempts",
+  "audit_log", "counters", "users", "services", "branches",
+] as const;
 
 /* ------------------------------------------------------------------ */
 /* Schema                                                              */

@@ -1,6 +1,11 @@
 -- ------------------------------------------------------------------
 -- Wipe the demo database so `npm run seed` can build it again.
 --
+-- YOU PROBABLY DON'T NEED THIS. `npm run seed:reset` clears and rebuilds
+-- in one atomic transaction, which is safer — if it fails halfway, the
+-- wipe rolls back too. Keep this file for the case where the schema
+-- itself has changed and the tables need dropping, not just emptying.
+--
 -- Run in Supabase → SQL Editor, then run `npm run seed`.
 --
 -- This drops every table the app owns, in dependency order. It does NOT

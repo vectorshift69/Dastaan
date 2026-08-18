@@ -95,12 +95,18 @@ with no changes.
    > `GOOGLE_REVIEW_URL` is the salon's "write a review" link from its
    > Google Business profile. A placeholder is fine for now; the app only
    > uses it on the thank-you screen after a 4- or 5-star rating.
-3. Seed the database **from your machine**, once:
+3. Seed the database **from your machine**:
 
    ```bash
    cd dastaan-api        # .env already points DATABASE_URL at Supabase
-   npm run seed
+   npm run seed          # first time
+   npm run seed:reset    # clear and rebuild, any time after that
    ```
+
+   Both run as a single transaction, so an interrupted run rolls back
+   completely rather than leaving a half-built database behind. It writes
+   ~1,500 rows over the pooler and prints a dot per day — give it a couple
+   of minutes.
 
    > Render's Free instances have **no shell and no one-off jobs**, so
    > `npm run seed:built` on the server isn't an option until you're on a

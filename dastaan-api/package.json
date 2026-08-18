@@ -2,16 +2,17 @@
   "name": "dastaan-api",
   "version": "0.1.0",
   "private": true,
-  "description": "Dastaan salon platform — backend API service",
+  "description": "Dastaan salon platform \u2014 backend API service",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/seed.ts",
+    "seed:reset": "tsx src/seed.ts --reset",
     "typecheck": "tsc --noEmit",
-
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "seed:built": "node dist/seed.js"
+    "seed:built": "node dist/seed.js",
+    "seed:built:reset": "node dist/seed.js --reset"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.5",

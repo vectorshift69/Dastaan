@@ -14,7 +14,7 @@
 
 import "./load-env.js"; // MUST be first
 import { randomBytes } from "node:crypto";
-import { db, migrate, uid, now, nextCounter } from "./db.js";
+import { db, migrate, uid, now, nextCounter, APP_TABLES, closeDb } from "./db.js";
 import { hmacCode, hashPassword } from "./security.js";
 import { snapshotDay } from "./routes/reports.js";
 
@@ -187,10 +187,23 @@ const openingStock: [string, string, number, number][] = [
 
 /* ------------------------------------------------------------------ */
 
+const RESET = process.argv.includes("--reset") || process.env.SEED_RESET === "1";
+
 const run = async () => {
+  if (RESET) {
+    /* Same transaction as the insert below, so a wipe can never survive on
+       its own — either you end up with a full demo salon or with what you
+       started with. */
+    await db.exec(`TRUNCATE TABLE ${APP_TABLES.join(", ")} CASCADE`);
+    console.log("Reset: cleared all app tables.");
+  }
+
   const existing = await db.prepare("SELECT COUNT(*) AS n FROM branches").get() as { n: number };
   if (Number(existing.n) > 0) {
-    console.log("Already seeded — this database already has data. To start over, drop the tables (Supabase → SQL Editor) and run again.");
+    console.log(
+      "Already seeded — this database already has data.\n" +
+      "  To rebuild it from scratch:  npm run seed:reset"
+    );
     return;
   }
 
@@ -292,7 +305,9 @@ const run = async () => {
   let reviewCount = 0;
   const stockSold = new Map<string, number>(); // `${pid}:${bid}` -> qty
 
+  process.stdout.write(`Writing ${HISTORY_DAYS} days of history `);
   for (let back = HISTORY_DAYS; back >= 1; back--) {
+    process.stdout.write("·"); // so a slow connection doesn't look like a hang
     const date = dayOffset(-back);
     const weekday = new Date(`${date}T12:00:00Z`).getUTCDay(); // 0 Sun … 6 Sat
     const busy = weekday === 5 || weekday === 6 || weekday === 0; // Fri–Sun in the UAE
@@ -424,6 +439,8 @@ const run = async () => {
       }
     }
   }
+
+  process.stdout.write(" done\n");
 
   /* apply the six weeks of retail sales to the stock on hand */
   for (const [key, qty] of stockSold) {
@@ -560,4 +577,21 @@ const run = async () => {
   );
 };
 
-await run();
+/* One transaction for the whole thing. It writes ~1,500 rows, and over a
+   hosted pooler that takes a couple of minutes — long enough for a dropped
+   connection or an impatient Ctrl+C. Without a transaction each statement
+   auto-commits, so an interruption leaves a half-built database that still
+   looks seeded. Wrapped like this it is all-or-nothing, and materially
+   faster too, since there is one commit instead of fifteen hundred. */
+try {
+  await db.transaction(run);
+} catch (err) {
+  console.error(
+    "\nSeed failed — nothing was written, the database is exactly as you found it.\n" +
+    "Fix the cause and run it again.\n"
+  );
+  console.error(err);
+  await closeDb().catch(() => {});
+  process.exit(1);
+}
+await closeDb().catch(() => {});
