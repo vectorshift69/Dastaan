@@ -372,12 +372,12 @@ for (const sec of SECTIONS) {
 
 children.push(new Paragraph({ children: [new PageBreak()] }));
 children.push(H1("6 · Rebuilding the demo data"));
-children.push(P("The demo data is deterministic — the same figures come out every time, so a demo can be rehearsed. Rebuild it whenever it has been messed up, and the day before a demo so the diary sits on the right date."));
+children.push(P("The demo data is deterministic for a given day — re-running it on the same date gives identical figures, so a demo can be rehearsed. Rebuild it whenever it has been messed up, and the day before a demo so the diary sits on the right date."));
 children.push(SPACER(60));
 children.push(table([new TableRow({ children: [tcell("cd ~/Documents/Dastaan/dastaan-api\nnpm run seed:reset", { w: W, mono: true, size: 17, fill: "F4F2EC" })] })], [W]));
 children.push(SPACER(140));
-children.push(P("It writes about 1,500 rows and takes a couple of minutes, printing a dot per day so you can see it working. It runs as a single transaction: if it fails, or you stop it, everything rolls back and you simply run it again."));
-children.push(P("Expect it to finish with roughly 445 invoices and about AED 100,000 of revenue across 42 trading days, 240 ratings and 9 registered clients."));
+children.push(P("It writes about 1,500 rows in roughly 110 database round trips — about half a minute against Supabase. It prints a dot per day as it builds, then a dot per table as it writes. It runs as a single transaction: if it fails, or you stop it, everything rolls back and you simply run it again."));
+children.push(P("Expect roughly 450–470 invoices and about AED 100,000 of revenue across 42 trading days, 250-odd ratings and 9 registered clients. The exact figures move with the day you run it on."));
 
 children.push(H2("What good demo data looks like"));
 children.push(table([headRow(["Screen", "Should show"], [2400, 6626]),

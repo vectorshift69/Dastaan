@@ -8,13 +8,19 @@
 /* archived timeline days. Every screen in the console has something    */
 /* real to show — nothing is an empty state.                            */
 /*                                                                      */
-/* It is deterministic: the same numbers come out every run, so a demo  */
-/* can be rehearsed.                                                    */
+/* Deterministic for a given day: re-running it on the same date gives  */
+/* identical figures, so a demo can be rehearsed. Run it on a different */
+/* date and the totals shift a little, because the weekend pattern      */
+/* moves with the calendar.                                             */
+/*                                                                      */
+/* Written in ~110 database round trips, not ~1,500: the rows are       */
+/* collected in memory and inserted in bulk. One-at-a-time inserts are  */
+/* all network latency against a hosted database and take minutes.      */
 /* ------------------------------------------------------------------ */
 
 import "./load-env.js"; // MUST be first
 import { randomBytes } from "node:crypto";
-import { db, migrate, uid, now, nextCounter, APP_TABLES, closeDb } from "./db.js";
+import { db, migrate, uid, now, nextCounter, bulkInsert, APP_TABLES, closeDb } from "./db.js";
 import { hmacCode, hashPassword } from "./security.js";
 import { snapshotDay } from "./routes/reports.js";
 
@@ -216,37 +222,28 @@ const run = async () => {
 
   /* ---------- reference data ---------- */
 
-  for (const b of branches)
-    await db.prepare("INSERT INTO branches (id,name,area,address,hours,phone) VALUES (?,?,?,?,?,?)").run(...b);
-  for (const s of services)
-    await db.prepare("INSERT INTO services (id,name,minutes,price,category) VALUES (?,?,?,?,?)").run(...s);
-  for (const [id, name, title, branch, code, role] of staff)
-    await db.prepare("INSERT INTO users (id,role,name,title,branch_id,code_hmac,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, role, name, title, branch, hmacCode(code), now());
-
-  for (const [id, name, sku, category, kind, price] of products)
-    await db.prepare("INSERT INTO products (id,name,sku,category,kind,price,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, name, sku, category, kind, price, now());
-  for (const [pid, bid, qty, reorder] of openingStock) {
-    await db.prepare("INSERT INTO stock_levels (product_id, branch_id, qty, reorder_at) VALUES (?,?,?,?)")
-      .run(pid, bid, qty, reorder);
-    await db.prepare(
-      "INSERT INTO stock_movements (id, product_id, branch_id, delta, reason, note, actor_id, created_at) VALUES (?,?,?,?,?,?,?,?)"
-    ).run(uid(), pid, bid, qty, "received", "Opening stock count", "own1", at(dayOffset(-HISTORY_DAYS), "09:00"));
-  }
+  await bulkInsert("branches", ["id", "name", "area", "address", "hours", "phone"], branches);
+  await bulkInsert("services", ["id", "name", "minutes", "price", "category"], services.map((x) => [...x]));
+  await bulkInsert("users", ["id", "role", "name", "title", "branch_id", "code_hmac", "created_at"],
+    staff.map(([id, name, title, branch, code, role]) => [id, role, name, title, branch, hmacCode(code), now()]));
+  await bulkInsert("products", ["id", "name", "sku", "category", "kind", "price", "created_at"],
+    products.map(([id, name, sku, category, kind, price]) => [id, name, sku, category, kind, price, now()]));
+  await bulkInsert("stock_levels", ["product_id", "branch_id", "qty", "reorder_at"],
+    openingStock.map((x) => [...x]));
+  await bulkInsert("stock_movements",
+    ["id", "product_id", "branch_id", "delta", "reason", "note", "actor_id", "created_at"],
+    openingStock.map(([pid, bid, qty]) =>
+      [uid(), pid, bid, qty, "received", "Opening stock count", "own1", at(dayOffset(-HISTORY_DAYS), "09:00")]));
 
   /* ---------- coupons ---------- */
 
   const couponIds = { welcome: uid(), ramadan: uid(), lapsed: uid() };
-  await db.prepare(
-    "INSERT INTO coupons (id, code, type, value, scope, min_amount, max_uses, created_at) VALUES (?,?,?,?,?,?,?,?)"
-  ).run(couponIds.welcome, "WELCOME10", "percent", 10, "both", 50, 200, now());
-  await db.prepare(
-    "INSERT INTO coupons (id, code, type, value, scope, min_amount, max_uses, created_at) VALUES (?,?,?,?,?,?,?,?)"
-  ).run(couponIds.ramadan, "GROOM25", "fixed", 25, "services", 150, 500, now());
-  await db.prepare(
-    "INSERT INTO coupons (id, code, type, value, scope, min_amount, max_uses, valid_to, active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-  ).run(couponIds.lapsed, "SUMMER15", "percent", 15, "both", 0, 100, `${dayOffset(-30)}T23:59:59`, 0, now());
+  await bulkInsert("coupons",
+    ["id", "code", "type", "value", "scope", "min_amount", "max_uses", "valid_to", "active", "created_at"], [
+    [couponIds.welcome, "WELCOME10", "percent", 10, "both", 50, 200, null, 1, now()],
+    [couponIds.ramadan, "GROOM25", "fixed", 25, "services", 150, 500, null, 1, now()],
+    [couponIds.lapsed, "SUMMER15", "percent", 15, "both", 0, 100, `${dayOffset(-30)}T23:59:59`, 0, now()],
+  ]);
   const couponUses = { welcome: 0, ramadan: 0 };
 
   /* ---------- clients + loyalty accounts ---------- */
@@ -255,18 +252,20 @@ const run = async () => {
   const accountIds = new Map<string, string>();  // clientId -> loyalty account id
   const pwd = await hashPassword("demo1234");    // hashed once — bcrypt is deliberately slow
 
+  const clientRows: unknown[][] = [];
+  const accountRows: unknown[][] = [];
   for (const [userId, name, phone] of clients) {
     const id = uid();
     clientIds.set(userId, id);
-    await db.prepare("INSERT INTO users (id,role,user_id,name,phone,password_hash,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, "client", userId, name, phone, pwd, at(dayOffset(-HISTORY_DAYS - int(10, 240)), "12:00"));
-
+    clientRows.push([id, "client", userId, name, phone, pwd, at(dayOffset(-HISTORY_DAYS - int(10, 240)), "12:00")]);
     const accId = uid();
     accountIds.set(id, accId);
-    await db.prepare("INSERT INTO loyalty_accounts (id, client_id, qr_token, points, lifetime_points, created_at) VALUES (?,?,?,?,?,?)")
-      .run(accId, id, userId === "demo" ? "demotoken00000000000000000000000" : randomBytes(16).toString("hex"),
-        0, 0, at(dayOffset(-HISTORY_DAYS), "12:00"));
+    accountRows.push([accId, id,
+      userId === "demo" ? "demotoken00000000000000000000000" : randomBytes(16).toString("hex"),
+      0, 0, at(dayOffset(-HISTORY_DAYS), "12:00")]);
   }
+  await bulkInsert("users", ["id", "role", "user_id", "name", "phone", "password_hash", "created_at"], clientRows);
+  await bulkInsert("loyalty_accounts", ["id", "client_id", "qr_token", "points", "lifetime_points", "created_at"], accountRows);
 
   /* Balances carried over from Fresha, so the loyalty screen shows a
      spread of tiers on day one rather than nine identical zeroes.       */
@@ -279,12 +278,12 @@ const run = async () => {
     ["yasser.z", 250],
   ];
   const points = new Map<string, number>();
-  for (const [userId, opening] of carriedOver) {
-    const accId = accountIds.get(clientIds.get(userId)!)!;
-    points.set(accId, opening);
-    await db.prepare("INSERT INTO points_transactions (id, account_id, delta, reason, created_at) VALUES (?,?,?,?,?)")
-      .run(uid(), accId, opening, "migration_from_fresha", at(dayOffset(-HISTORY_DAYS), "12:05"));
-  }
+  await bulkInsert("points_transactions", ["id", "account_id", "delta", "reason", "created_at"],
+    carriedOver.map(([userId, opening]) => {
+      const accId = accountIds.get(clientIds.get(userId)!)!;
+      points.set(accId, opening);
+      return [uid(), accId, opening, "migration_from_fresha", at(dayOffset(-HISTORY_DAYS), "12:05")];
+    }));
 
   /* ---------- who walks through the door, and how often ----------
      Dealing visits out of a shuffled pool keeps the visit counts honest:
@@ -309,6 +308,18 @@ const run = async () => {
 
   const year = new Date().getFullYear();
   let invoiceCount = 0;
+
+  /* Rows are collected here and written in a handful of multi-row INSERTs at
+     the end. Inserting them one at a time means ~1,500 round trips, which is
+     twenty minutes of pure network latency against a database in Frankfurt. */
+  const rowsBookings: unknown[][] = [];
+  const rowsInvoices: unknown[][] = [];
+  const rowsReviews: unknown[][] = [];
+  const rowsNotifications: unknown[][] = [];
+  const rowsPoints: unknown[][] = [];
+  const rowsRedemptions: unknown[][] = [];
+  const rowsMovements: unknown[][] = [];
+  let invoiceSeq = 0;
   let reviewCount = 0;
   const stockSold = new Map<string, number>(); // `${pid}:${bid}` -> qty
 
@@ -340,13 +351,9 @@ const run = async () => {
         const bookingId = uid();
         const createdAt = at(dayOffset(-back - int(1, 6)), "18:00");
 
-        await db.prepare(
-          `INSERT INTO bookings (id,branch_id,barber_id,client_id,client_name,client_phone,service_ids,
-             starts_at,minutes,status,online,paid,cancel_reason,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(bookingId, branchId, barberId, clientRowId, clientName, clientPhone,
+        rowsBookings.push([bookingId, branchId, barberId, clientRowId, clientName, clientPhone,
           JSON.stringify(basket), at(date, slot), minutes, status, online, served ? 1 : 0,
-          status === "Cancelled" ? "Client rescheduled" : null, createdAt, at(date, slot));
+          status === "Cancelled" ? "Client rescheduled" : null, createdAt, at(date, slot)]);
 
         if (!served) continue;
 
@@ -366,9 +373,7 @@ const run = async () => {
           items.push({ name: qty > 1 ? `${qty}× ${p[1]}` : p[1], price: line });
           const key = `${p[0]}:${branchId}`;
           stockSold.set(key, (stockSold.get(key) ?? 0) + qty);
-          await db.prepare(
-            "INSERT INTO stock_movements (id, product_id, branch_id, delta, reason, note, actor_id, created_at) VALUES (?,?,?,?,?,?,?,?)"
-          ).run(uid(), p[0], branchId, -qty, "pos_sale", `Sold at checkout`, barberId, addMinutes(date, slot, minutes));
+          rowsMovements.push([uid(), p[0], branchId, -qty, "pos_sale", "Sold at checkout", barberId, addMinutes(date, slot, minutes)]);
         }
 
         /* manual discount is rare and small; coupons are the usual route */
@@ -387,22 +392,16 @@ const run = async () => {
         const total = r2(gross + tip);
         const method = pick(PAY_METHODS);
         const issuedAt = addMinutes(date, slot, minutes);
-        const invoiceNo = `INV-${year}-${String(await nextCounter(`invoice:${year}`)).padStart(5, "0")}`;
+        const invoiceNo = `INV-${year}-${String(++invoiceSeq).padStart(5, "0")}`;
         invoiceCount++;
 
-        await db.prepare(
-          `INSERT INTO invoices (id, invoice_no, booking_id, branch_id, client_name, client_phone,
-             items, gross, discount, tip, vat, total, payment_method, issued_by, coupon_code, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(uid(), invoiceNo, bookingId, branchId, clientName, clientPhone,
+        rowsInvoices.push([uid(), invoiceNo, bookingId, branchId, clientName, clientPhone,
           JSON.stringify(items), gross, discount, tip, vat, total, method,
-          branchId === "b1" ? "st1" : "st2", couponCode, issuedAt);
+          branchId === "b1" ? "st1" : "st2", couponCode, issuedAt]);
 
         if (couponCode) {
-          await db.prepare(
-            "INSERT INTO coupon_redemptions (id, coupon_id, context, amount_saved, client_id, created_at) VALUES (?,?,?,?,?,?)"
-          ).run(uid(), couponCode === "WELCOME10" ? couponIds.welcome : couponIds.ramadan,
-            `booking:${bookingId}`, couponDiscount, clientRowId, issuedAt);
+          rowsRedemptions.push([uid(), couponCode === "WELCOME10" ? couponIds.welcome : couponIds.ramadan,
+            `booking:${bookingId}`, couponDiscount, clientRowId, issuedAt]);
         }
 
         /* ---- loyalty: 1 point per dirham spent, same rule as checkout ---- */
@@ -410,37 +409,29 @@ const run = async () => {
           const accId = accountIds.get(clientRowId)!;
           const pts = Math.floor(gross);
           points.set(accId, (points.get(accId) ?? 0) + pts);
-          await db.prepare(
-            "INSERT INTO points_transactions (id, account_id, booking_id, delta, reason, created_at) VALUES (?,?,?,?,?,?)"
-          ).run(uid(), accId, bookingId, pts, "service_checkout", issuedAt);
+          rowsPoints.push([uid(), accId, bookingId, pts, "service_checkout", issuedAt]);
         }
 
         /* ---- feedback: an invite goes out for every visit, ~55% come back ---- */
         const answered = chance(0.55);
         const rating = answered ? (rnd() < 0.62 ? 5 : rnd() < 0.75 ? 4 : rnd() < 0.85 ? 3 : int(1, 2)) : null;
-        await db.prepare(
-          `INSERT INTO reviews (id, booking_id, barber_id, branch_id, client_id, client_name, token, rating, comment, submitted_at, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(uid(), bookingId, barberId, branchId, clientRowId, clientName,
+        rowsReviews.push([uid(), bookingId, barberId, branchId, clientRowId, clientName,
           randomBytes(12).toString("hex"), rating,
           answered && rating! >= 3 ? pick(REVIEW_COMMENTS) : answered ? "Cut was rushed, not what I asked for." : null,
           answered ? addMinutes(date, slot, minutes + int(30, 600)) : null,
-          issuedAt);
+          issuedAt]);
         if (answered) reviewCount++;
 
         /* ---- notification trail for the last week only (keeps the outbox readable) ---- */
         if (back <= 7) {
           for (const [kind, offset] of [["confirmation", -1440], ["reminder", -120], ["feedback", minutes + 15]] as const) {
-            await db.prepare(
-              `INSERT INTO notifications (id, booking_id, to_phone, kind, body, scheduled_at, status, attempts, sent_at, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)`
-            ).run(uid(), bookingId, clientPhone,
+            rowsNotifications.push([uid(), bookingId, clientPhone,
               kind,
               kind === "confirmation" ? `Dastaan: your booking with ${staff.find((s) => s[0] === barberId)![1]} is confirmed for ${slot}.`
                 : kind === "reminder" ? `Dastaan: see you at ${slot} today.`
                 : `Dastaan: thanks for visiting. How did we do?`,
               addMinutes(date, slot, offset), "sent", 1,
-              addMinutes(date, slot, offset), createdAt);
+              addMinutes(date, slot, offset), createdAt]);
           }
         }
       }
@@ -449,11 +440,65 @@ const run = async () => {
 
   process.stdout.write(" done\n");
 
+  /* ---------- write it all, in a handful of round trips ---------- */
+  process.stdout.write("Writing to the database ");
+  const flush = async (label: string, tableName: string, cols: string[], rows: unknown[][]) => {
+    await bulkInsert(tableName, cols, rows);
+    process.stdout.write("·");
+    return `${rows.length} ${label}`;
+  };
+
+  const written: string[] = [];
+  written.push(await flush("appointments", "bookings",
+    ["id", "branch_id", "barber_id", "client_id", "client_name", "client_phone", "service_ids",
+     "starts_at", "minutes", "status", "online", "paid", "cancel_reason", "created_at", "updated_at"],
+    rowsBookings));
+  written.push(await flush("invoices", "invoices",
+    ["id", "invoice_no", "booking_id", "branch_id", "client_name", "client_phone", "items",
+     "gross", "discount", "tip", "vat", "total", "payment_method", "issued_by", "coupon_code", "created_at"],
+    rowsInvoices));
+  written.push(await flush("feedback invites", "reviews",
+    ["id", "booking_id", "barber_id", "branch_id", "client_id", "client_name", "token",
+     "rating", "comment", "submitted_at", "created_at"],
+    rowsReviews));
+  written.push(await flush("messages", "notifications",
+    ["id", "booking_id", "to_phone", "kind", "body", "scheduled_at", "status", "attempts", "sent_at", "created_at"],
+    rowsNotifications));
+  written.push(await flush("points entries", "points_transactions",
+    ["id", "account_id", "booking_id", "delta", "reason", "created_at"],
+    rowsPoints));
+  written.push(await flush("code redemptions", "coupon_redemptions",
+    ["id", "coupon_id", "context", "amount_saved", "client_id", "created_at"],
+    rowsRedemptions));
+  written.push(await flush("stock movements", "stock_movements",
+    ["id", "product_id", "branch_id", "delta", "reason", "note", "actor_id", "created_at"],
+    rowsMovements));
+  process.stdout.write(" done\n");
+
+  /* the invoice counter has to end up where the numbering left off, so the
+     next real checkout carries on from INV-<year>-00446 rather than 00001 */
+  await db.prepare(
+    `INSERT INTO counters (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(`invoice:${year}`, invoiceSeq);
+
   /* apply the six weeks of retail sales to the stock on hand */
+  const stockUpdates: [string, string, number][] = [];
   for (const [key, qty] of stockSold) {
-    const [pid, bid] = key.split(":");
-    await db.prepare("UPDATE stock_levels SET qty = ? WHERE product_id = ? AND branch_id = ?")
-      .run(Math.max(0, (openingStock.find((s) => s[0] === pid && s[1] === bid)?.[2] ?? 0) - qty + int(6, 20)), pid, bid);
+    const [pid, bid] = key.split(":") as [string, string];
+    const opening = openingStock.find((s) => s[0] === pid && s[1] === bid)?.[2] ?? 0;
+    stockUpdates.push([pid, bid, Math.max(0, opening - qty + int(6, 20))]);
+  }
+  if (stockUpdates.length > 0) {
+    /* one UPDATE ... FROM (VALUES ...) rather than one round trip per line */
+    const tuples = stockUpdates.map(() => "(?,?,?)").join(",");
+    /* the casts matter: parameters inside VALUES arrive untyped, and Postgres
+       then infers text, which will not assign to an integer column */
+    await db.prepare(
+      `UPDATE stock_levels AS sl SET qty = v.qty::int
+       FROM (VALUES ${tuples}) AS v(product_id, branch_id, qty)
+       WHERE sl.product_id = v.product_id::text AND sl.branch_id = v.branch_id::text`
+    ).run(...stockUpdates.flat());
   }
   /* …but keep the two deliberately-low lines low, so the reorder warning shows */
   await db.prepare("UPDATE stock_levels SET qty = 3 WHERE product_id = 'p4' AND branch_id = 'b1'").run();
@@ -506,6 +551,7 @@ const run = async () => {
     [3, "br8", "yasser.z", -1, ["s3"], "18:30"],
   ];
 
+  const todayRows: unknown[][] = [];
   const branchOfBarber = (id: string) => (barbersOf.b1.includes(id) ? "b1" : "b2");
 
   for (const [barberId, userId, walkIdx, basket, slot, status, online, paid] of todays) {
@@ -513,13 +559,9 @@ const run = async () => {
     const name = userId ? clients.find(([u]) => u === userId)![1] : walkIns[walkIdx]![0];
     const phone = userId ? clients.find(([u]) => u === userId)![2] : walkIns[walkIdx]![1];
     const minutes = basket.reduce((m, s) => m + (serviceMinutes.get(s) ?? 45), 0);
-    await db.prepare(
-      `INSERT INTO bookings (id,branch_id,barber_id,client_id,client_name,client_phone,service_ids,
-         starts_at,minutes,status,online,paid,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(uid(), branchOfBarber(barberId), barberId, clientRowId, name, phone,
+    todayRows.push([uid(), branchOfBarber(barberId), barberId, clientRowId, name, phone,
       JSON.stringify(basket), at(today, slot), minutes, status, online, paid,
-      at(dayOffset(-int(1, 5)), "19:30"), now());
+      at(dayOffset(-int(1, 5)), "19:30"), now()]);
   }
 
   for (const [ahead, barberId, userId, walkIdx, basket, slot] of upcoming) {
@@ -527,13 +569,13 @@ const run = async () => {
     const name = userId ? clients.find(([u]) => u === userId)![1] : walkIns[walkIdx]![0];
     const phone = userId ? clients.find(([u]) => u === userId)![2] : walkIns[walkIdx]![1];
     const minutes = basket.reduce((m, s) => m + (serviceMinutes.get(s) ?? 45), 0);
-    await db.prepare(
-      `INSERT INTO bookings (id,branch_id,barber_id,client_id,client_name,client_phone,service_ids,
-         starts_at,minutes,status,online,paid,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(uid(), branchOfBarber(barberId), barberId, clientRowId, name, phone,
-      JSON.stringify(basket), at(dayOffset(ahead), slot), minutes, "Confirmed", 1, 0, now(), now());
+    todayRows.push([uid(), branchOfBarber(barberId), barberId, clientRowId, name, phone,
+      JSON.stringify(basket), at(dayOffset(ahead), slot), minutes, "Confirmed", 1, 0, now(), now()]);
   }
+
+  await bulkInsert("bookings",
+    ["id", "branch_id", "barber_id", "client_id", "client_name", "client_phone", "service_ids",
+     "starts_at", "minutes", "status", "online", "paid", "created_at", "updated_at"], todayRows);
 
   /* ---------- store orders, one in each state ---------- */
 
@@ -544,6 +586,9 @@ const run = async () => {
     ["zaid.m", "b1", [["p4", 1], ["p6", 1]], "placed", -1, null],
     ["faizan.q", "b2", [["p2", 1]], "cancelled", -5, null],
   ];
+  const orderRows: unknown[][] = [];
+  const orderMovementRows: unknown[][] = [];
+  let orderSeq = 0;
   for (const [userId, branchId, lines, status, back, coupon] of orderSpecs) {
     const items = lines.map(([pid, qty]) => ({
       productId: pid, name: productName.get(pid)!, qty, price: productPrice.get(pid)!,
@@ -553,19 +598,24 @@ const run = async () => {
     const total = r2(subtotal - discount);
     const vat = r2((total * 0.05) / 1.05);
     const placedAt = at(dayOffset(back), "20:10");
-    await db.prepare(
-      `INSERT INTO orders (id, order_no, client_id, items, subtotal, discount, coupon_code, vat, total, status, fulfil_branch_id, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(uid(), `ORD-${year}-${String(await nextCounter(`order:${year}`)).padStart(5, "0")}`,
+    orderRows.push([uid(), `ORD-${year}-${String(++orderSeq).padStart(5, "0")}`,
       clientIds.get(userId)!, JSON.stringify(items), subtotal, discount, coupon, vat, total,
-      status, branchId, placedAt, placedAt);
+      status, branchId, placedAt, placedAt]);
 
     if (status === "fulfilled")
       for (const [pid, qty] of lines)
-        await db.prepare(
-          "INSERT INTO stock_movements (id, product_id, branch_id, delta, reason, note, actor_id, created_at) VALUES (?,?,?,?,?,?,?,?)"
-        ).run(uid(), pid, branchId, -qty, "online_sale", "Store order fulfilled", "st1", placedAt);
+        orderMovementRows.push([uid(), pid, branchId, -qty, "online_sale", "Store order fulfilled", "st1", placedAt]);
   }
+
+  await bulkInsert("orders",
+    ["id", "order_no", "client_id", "items", "subtotal", "discount", "coupon_code", "vat", "total",
+     "status", "fulfil_branch_id", "created_at", "updated_at"], orderRows);
+  await bulkInsert("stock_movements",
+    ["id", "product_id", "branch_id", "delta", "reason", "note", "actor_id", "created_at"], orderMovementRows);
+  await db.prepare(
+    `INSERT INTO counters (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(`order:${year}`, orderSeq);
 
   /* ---------- archive the past fortnight so the Timeline view has history ---------- */
 

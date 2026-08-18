@@ -165,6 +165,33 @@ export const db = {
   },
 };
 
+/**
+ * Insert many rows in as few round trips as possible.
+ *
+ * A hosted database is typically 150–400 ms away, so a loop of single-row
+ * INSERTs is dominated entirely by network latency — 1,500 rows one at a
+ * time is twenty minutes of waiting, most of it doing nothing. Folding them
+ * into multi-row INSERTs turns that into a handful of round trips.
+ *
+ * Chunked because Postgres caps a statement at 65,535 bind parameters.
+ */
+export async function bulkInsert(
+  tableName: string,
+  columns: string[],
+  rows: unknown[][],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const perRow = columns.length;
+  const chunkSize = Math.max(1, Math.floor(60000 / perRow));
+  const cols = columns.join(", ");
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    const values = chunk.map(() => `(${columns.map(() => "?").join(",")})`).join(",");
+    await db.prepare(`INSERT INTO ${tableName} (${cols}) VALUES ${values}`).run(...chunk.flat());
+  }
+  return rows.length;
+}
+
 /* Every table the app owns, child-first — used by the seed's --reset. */
 export const APP_TABLES = [
   "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
