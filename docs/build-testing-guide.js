@@ -11,13 +11,14 @@ const fs = require("fs");
 const {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   Table, TableRow, TableCell, WidthType, ShadingType, BorderStyle,
-  PageBreak, Header, Footer, PageNumber, convertInchesToTwip,
+  PageBreak, Header, Footer, PageNumber, convertInchesToTwip, ImageRun,
 } = require("docx");
 
 const INK = "111111", GOLD = "8A6D1F", GREY = "6B6B6B", RULE = "D8D4C8";
 const PASS = "1E6B3A", FAIL = "9B2C1F", WARN = "8A5A00";
 const W = 9026;
-const RUN_DATE = "18 August 2026";
+const RUN_DATE = "18–19 August 2026";
+const EVIDENCE_DIR = __dirname + "/evidence";
 
 const P = (text, o = {}) => new Paragraph({
   spacing: { before: o.before ?? 0, after: o.after ?? 120, line: o.line ?? 260 },
@@ -59,6 +60,41 @@ const headRow = (labels, widths) => new TableRow({ tableHeader: true,
   children: labels.map((l, i) => tcell(l, { w: widths[i], bold: true, size: 16, color: "FFFFFF", fill: INK })) });
 const SPACER = (h = 120) => new Paragraph({ spacing: { after: h }, children: [] });
 
+/* A screenshot, captured from the live system, with a caption under it. */
+const FIG_W = 600, FIG_H = 282; // points; the captures are 1200x564
+const figure = (file, n, caption) => ([
+  new Paragraph({
+    spacing: { before: 200, after: 60 }, alignment: AlignmentType.CENTER,
+    children: [new ImageRun({
+      type: "jpg",
+      data: fs.readFileSync(`${EVIDENCE_DIR}/${file}`),
+      transformation: { width: FIG_W, height: FIG_H },
+    })],
+  }),
+  new Paragraph({
+    spacing: { after: 240 }, alignment: AlignmentType.CENTER,
+    children: [
+      new TextRun({ text: `Figure ${n}. `, bold: true, size: 16, color: GOLD, font: "Calibri" }),
+      new TextRun({ text: caption, size: 16, color: GREY, font: "Calibri", italics: true }),
+    ],
+  }),
+]);
+
+/* Screenshots taken from the live deployment on 19 August 2026, after the
+   demo data was rebuilt. Every figure is an unretouched capture. */
+const EVIDENCE = [
+  ["home-3d-hero.jpg", "The public site. Logo mark and wordmark in ivory, gentlemen’s grooming wording, and the 3D grooming scene that moves with the scroll.", "O1, O2"],
+  ["team-keypad.jpg", "Staff entrance. A 4-digit keypad and nothing else — no email, no password field anywhere on the screen.", "A1–A5, O3"],
+  ["booking-availability.jpg", "The defect that started this: booking a time. Aqib Khan’s booked morning is crossed out and unclickable — 10:00 to 1:00, then 4:00 to 5:00 — against his real diary. Seven days offered. 5:15 pm selected and carried into the summary.", "C1–C5"],
+  ["console-calendar.jpg", "The salon’s diary, signed in as the owner. A column per chair, appointments in their slots, status colour-coded, a no-show struck through. The logo picks up the console’s lighter chrome automatically.", "D5, O4"],
+  ["reports-90-days.jpg", "Sales reports — owner only. AED 99,648 across 463 sales, tips, VAT and discounts broken out, revenue by day with the weekend lift visible, payment split and best sellers.", "K1–K5"],
+  ["clients-list.jpg", "The client book: 157 people, visit counts, last visit and loyalty tier. Walk-ins are tagged as such; registered clients carry a tier and a balance.", "B4"],
+  ["inventory-low-stock.jpg", "Stock by branch. Charcoal Daily Shampoo is down to 3 against a reorder point of 8, flagged LOW. Retail and salon-only supplies are distinguished.", "I1"],
+  ["loyalty-card.jpg", "The client’s loyalty card: balance, tier, a QR code the desk scans off the phone, progress to the next tier, and Add to Apple Wallet.", "G3"],
+  ["store-products.jpg", "The online store. Six retail products; the three in-salon supplies are correctly not for sale.", "J1"],
+  ["store-cart-place-order.jpg", "The basket with card payments switched off. It reads “Place order”, not “Pay now”, and states that payment is taken in branch — the website follows the switch with no code change.", "M3"],
+];
+
 /* ================================ DATA ================================ */
 
 const ENV = [
@@ -84,7 +120,7 @@ const STAFF = [
 ];
 
 const CLIENTS = [
-  ["demo", "Rayyan Habib", "Gold tier, highest balance. Use this one for the demo."],
+  ["demo", "Rayyan Habib", "Highest balance — sits just under Gold, so the progress bar is worth showing. Use this one for the demo."],
   ["omar.f", "Omar Al-Farsi", "Silver"], ["hamza.s", "Hamza Sheikh", "Silver"],
   ["zaid.m", "Zaid Al-Marri", "Member"], ["faizan.q", "Faizan Qureshi", "Member"],
   ["marwan.a", "Marwan Adel", "Member"], ["yasser.z", "Yasser Zaman", "Member"],
@@ -150,8 +186,8 @@ const SECTIONS = [
 { title: "C · Booking an appointment — the client’s side",
   intro: "This is the section that found defect D-1. Work through it carefully: it is the part of the system the public touches.",
   tests: [
-["C1","Open /book and go to the time step.","A row of the next seven days, then a grid of times.","Seven days offered, starting Today. Times run from the branch’s opening hour to its closing hour.","Pass"],
-["C2","Look at a barber with a busy morning.","Times already booked are crossed out and cannot be clicked.","Aqib Khan showed 18 of 50 slots crossed out, matching his actual diary.","Pass"],
+["C1","Open /book and go to the time step.","A row of the next seven days, then a grid of times.","Verified live 19 Aug: seven days offered from Today; times run 10:00–23:00, the Marina Walk trading hours. See Figure 3.","Pass"],
+["C2","Look at a barber with a busy morning.","Times already booked are crossed out and cannot be clicked.","Verified live 19 Aug: Aqib Khan showed 18 of 50 slots crossed out, matching his diary exactly. See Figure 3.","Pass"],
 ["C3","Pick a 45-minute service, then a 75-minute one, and compare the grids.","Fewer slots offered for the longer service — it needs a longer gap.","Confirmed: the grid is recalculated from the length of the services chosen.","Pass"],
 ["C4","Book a free slot, then try to book the same barber at the same time again.","Refused. The slot is crossed out when the grid reloads.","First booking 201. Second, same barber and time, refused with HTTP 409 “That time was just taken”. On reload the slot was crossed out.","Pass"],
 ["C5","After booking 13:15 for 45 minutes, look at 13:30.","Also unavailable — a booking starting then would run into the first one.","13:15, 13:30 and 13:45 all correctly blocked.","Pass"],
@@ -371,7 +407,18 @@ for (const sec of SECTIONS) {
 }
 
 children.push(new Paragraph({ children: [new PageBreak()] }));
-children.push(H1("6 · Rebuilding the demo data"));
+children.push(H1("6 · Evidence"));
+children.push(P("These are unretouched screenshots of the live system, captured on 19 August 2026 after the demo data was rebuilt. Figures 3 onward correspond to the tests listed beside each caption."));
+children.push(P("The figures show slightly higher totals than the test tables above — AED 99,648 against AED 97,555 — because the demo data was rebuilt between the two. That is expected: the dataset is deterministic for a given day, and the weekend pattern moves with the calendar.", { size: 18, color: GREY }));
+children.push(SPACER(120));
+
+EVIDENCE.forEach(([file, caption, tests], i) => {
+  const n = i + 1;
+  children.push(...figure(file, n, `${caption}  [tests ${tests}]`));
+});
+
+children.push(new Paragraph({ children: [new PageBreak()] }));
+children.push(H1("7 · Rebuilding the demo data"));
 children.push(P("The demo data is deterministic for a given day — re-running it on the same date gives identical figures, so a demo can be rehearsed. Rebuild it whenever it has been messed up, and the day before a demo so the diary sits on the right date."));
 children.push(SPACER(60));
 children.push(table([new TableRow({ children: [tcell("cd ~/Documents/Dastaan/dastaan-api\nnpm run seed:reset", { w: W, mono: true, size: 17, fill: "F4F2EC" })] })], [W]));
@@ -393,7 +440,7 @@ children.push(table([headRow(["Screen", "Should show"], [2400, 6626]),
     .map(r => new TableRow({ children: [tcell(r[0], { w: 2400, bold: true, size: 16 }), tcell(r[1], { w: 6626, size: 16 })] }))
 ], [2400, 6626]));
 
-children.push(H1("7 · Sign-off"));
+children.push(H1("8 · Sign-off"));
 children.push(P("Once you have worked through section 5, record the outcome here."));
 children.push(SPACER(140));
 const sign = (l) => new TableRow({ children: [tcell(l, { w: 2400, bold: true }), tcell(" ", { w: 3300 }), tcell(" ", { w: 3326 })] });
