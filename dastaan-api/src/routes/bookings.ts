@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db, uid, now } from "../db.js";
 import { requireAuth, requireRole, audit } from "../security.js";
+import { salonToday, isDate, isMonth } from "../time.js";
 import { onBookingCreated, onBookingCancelled, onServicePaid, onInvoiceIssued, drainDue } from "../notify/service.js";
 import { createInvoiceForBooking, invoiceToApi } from "../invoices.js";
 import { renderInvoicePdf } from "../invoice-pdf.js";
@@ -18,8 +19,14 @@ const createSchema = z.object({
   serviceIds: z.array(z.string().min(1)).min(1).max(10),
   // local salon time, e.g. 2026-08-13T15:30:00 (timezone handling is branch-local by design)
   startsAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, "Invalid start time"),
-  clientName: z.string().min(2).max(80).optional(), // staff-created bookings
+  /* Staff booking a walk-in, or a signed-in client booking for someone else
+     (a son, a friend). When these are absent the booking is for whoever is
+     signed in. */
+  clientName: z.string().min(2).max(80).optional(),
   clientPhone: z.string().max(24).optional(),
+  clientEmail: z.string().email().max(120).optional(),
+  /* explicit, so "book for someone else" can't happen by accident */
+  forSomeoneElse: z.boolean().optional(),
   online: z.boolean().optional(),
 });
 
@@ -89,7 +96,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
       return Promise.all(rows.map(toApi));
     }
 
-    const date = q.date && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : new Date().toISOString().slice(0, 10);
+    const date = isDate(q.date) ? q.date : salonToday();
     const from = `${date}T00:00:00`;
     const to = `${date}T23:59:59`;
 
@@ -108,6 +115,74 @@ export default async function bookingRoutes(app: FastifyInstance) {
       : (await db.prepare("SELECT * FROM bookings WHERE starts_at BETWEEN ? AND ? ORDER BY starts_at")
           .all(from, to) as BookingRow[]);
     return Promise.all(rows.map(toApi));
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Month overview — one row per trading day, for the calendar's month   */
+  /* view. A single query instead of thirty; the console used to have no  */
+  /* way to look past today at all.                                       */
+  /* ------------------------------------------------------------------ */
+  app.get("/bookings/month", async (req, reply) => {
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
+    if (!s) return;
+    const q = req.query as { month?: string; branchId?: string };
+    if (!isMonth(q.month)) return reply.code(400).send({ error: "month=YYYY-MM required" });
+
+    /* an admin is pinned to their own branch whatever they ask for */
+    const branchId = s.role === "admin" ? s.branchId! : (q.branchId ?? null);
+    const from = `${q.month}-01T00:00`;
+    const to = `${q.month}-32`; // string compare: sorts after any day in the month
+
+    const rows = (branchId
+      ? await db.prepare(
+          `SELECT substr(starts_at, 1, 10) AS "date",
+                  COUNT(*) AS "total",
+                  SUM(CASE WHEN paid = 1 THEN 1 ELSE 0 END) AS "served",
+                  SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) AS "cancelled",
+                  SUM(CASE WHEN status = 'No Show' THEN 1 ELSE 0 END) AS "noShows"
+           FROM bookings WHERE branch_id = ? AND starts_at >= ? AND starts_at < ?
+           GROUP BY substr(starts_at, 1, 10) ORDER BY 1`
+        ).all(branchId, from, to)
+      : await db.prepare(
+          `SELECT substr(starts_at, 1, 10) AS "date",
+                  COUNT(*) AS "total",
+                  SUM(CASE WHEN paid = 1 THEN 1 ELSE 0 END) AS "served",
+                  SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) AS "cancelled",
+                  SUM(CASE WHEN status = 'No Show' THEN 1 ELSE 0 END) AS "noShows"
+           FROM bookings WHERE starts_at >= ? AND starts_at < ?
+           GROUP BY substr(starts_at, 1, 10) ORDER BY 1`
+        ).all(from, to)) as Record<string, unknown>[];
+
+    /* takings per day, owner only — reception has no business seeing turnover */
+    let revenue: Record<string, number> = {};
+    if (s.role === "super_admin") {
+      const inv = (branchId
+        ? await db.prepare(
+            `SELECT substr(created_at, 1, 10) AS "date", SUM(total) AS "sum"
+             FROM invoices WHERE branch_id = ? AND created_at >= ? AND created_at < ?
+             GROUP BY substr(created_at, 1, 10)`
+          ).all(branchId, from, to)
+        : await db.prepare(
+            `SELECT substr(created_at, 1, 10) AS "date", SUM(total) AS "sum"
+             FROM invoices WHERE created_at >= ? AND created_at < ?
+             GROUP BY substr(created_at, 1, 10)`
+          ).all(from, to)) as { date: string; sum: number }[];
+      revenue = Object.fromEntries(inv.map((r) => [r.date, Math.round(Number(r.sum))]));
+    }
+
+    return {
+      month: q.month,
+      branchId: branchId ?? "all",
+      today: salonToday(),
+      days: rows.map((r) => ({
+        date: String(r.date),
+        total: Number(r.total),
+        served: Number(r.served),
+        cancelled: Number(r.cancelled),
+        noShows: Number(r.noShows),
+        revenue: revenue[String(r.date)] ?? null,
+      })),
+    };
   });
 
   /* ------------------------------------------------------------------ */
@@ -211,23 +286,46 @@ export default async function bookingRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "That time was just taken — pick another slot" });
     }
 
+    /* ---- who is this appointment for? ----
+       A signed-in client books for themselves by default. If they tick
+       "someone else", the appointment carries that person's details but
+       stays linked to the account that made it — so it shows in their
+       history, and loyalty points still go to the account that paid. */
     const isClient = s.role === "client";
     const clientRow = isClient
       ? (await db.prepare("SELECT name, phone FROM users WHERE id = ?").get(s.sub) as { name: string; phone: string | null })
       : null;
-    const clientName = isClient ? clientRow!.name : body.clientName;
-    if (!clientName) return reply.code(400).send({ error: "Client name required" });
+
+    const bookingForOther = isClient && body.forSomeoneElse === true;
+    if (bookingForOther && !body.clientName)
+      return reply.code(400).send({ error: "Please give the name of the person the appointment is for" });
+
+    const clientName = bookingForOther
+      ? body.clientName!
+      : isClient
+        ? clientRow!.name
+        : body.clientName;
+
+    if (!clientName)
+      return reply.code(400).send({ error: "Client name required" });
+
+    const clientPhone = bookingForOther
+      ? (body.clientPhone ?? null)
+      : isClient
+        ? clientRow!.phone
+        : (body.clientPhone ?? null);
 
     const id = uid();
     await db.prepare(
-      `INSERT INTO bookings (id, branch_id, barber_id, client_id, client_name, client_phone,
+      `INSERT INTO bookings (id, branch_id, barber_id, client_id, client_name, client_phone, client_email,
         service_ids, starts_at, minutes, status, online, paid, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,'Booked',?,0,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,'Booked',?,0,?,?)`
     ).run(
       id, body.branchId, barberId,
       isClient ? s.sub : null,
       clientName,
-      (isClient ? clientRow!.phone : body.clientPhone) ?? null,
+      clientPhone,
+      bookingForOther ? (body.clientEmail ?? null) : null,
       JSON.stringify(body.serviceIds), body.startsAt, minutes,
       isClient || body.online ? 1 : 0,
       now(), now()

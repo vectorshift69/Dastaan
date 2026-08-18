@@ -4,13 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { CURRENCY } from "@/lib/data";
 
 type ClientRow = {
-  id: string | null; name: string; phone: string | null;
+  id: string | null; key: string; name: string; phone: string | null;
   visits: number; lastVisit: string | null; registered: boolean;
   loyalty: { tier: string; points: number } | null;
 };
 
 type Detail = {
   id: string; name: string; phone: string | null; userId: string | null;
+  registered: boolean;
   loyalty: { tier: string; points: number; lifetimePoints: number } | null;
   history: { id: string; startsAt: string; status: string; paid: boolean; barber: string; services: string[] }[];
 };
@@ -22,6 +23,7 @@ export default function ClientsView() {
   const [selected, setSelected] = useState<Detail | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "" });
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (term: string) => {
     const res = await fetch(`/api/clients?search=${encodeURIComponent(term)}`);
@@ -35,8 +37,8 @@ export default function ClientsView() {
     return () => clearTimeout(t);
   }, [search, load]);
 
-  const open = async (id: string) => {
-    const res = await fetch(`/api/clients/${id}`);
+  const open = async (key: string) => {
+    const res = await fetch(`/api/clients/${encodeURIComponent(key)}`);
     if (!res.ok) return;
     const d: Detail = await res.json();
     setSelected(d);
@@ -45,13 +47,30 @@ export default function ClientsView() {
   };
 
   const save = async () => {
-    if (!selected) return;
+    if (!selected || !selected.registered) return;
     const res = await fetch(`/api/clients/${selected.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: form.name, phone: form.phone || null }),
     });
     if (res.ok) { setEditing(false); open(selected.id); load(search); }
+  };
+
+  /* file a regular who has never registered — their past visits come with them */
+  const registerWalkIn = async () => {
+    if (!selected) return;
+    setBusy(true);
+    const res = await fetch("/api/clients/register-walkin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: selected.name, phone: selected.phone ?? undefined }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      const { id } = await res.json();
+      await load(search);
+      open(id);
+    }
   };
 
   if (denied)
@@ -84,9 +103,9 @@ export default function ClientsView() {
             <tbody>
               {rows.map((c) => (
                 <tr
-                  key={(c.id ?? c.name) + c.visits}
-                  onClick={() => c.id && open(c.id)}
-                  className={`border-b border-black/5 last:border-0 ${c.id ? "cursor-pointer hover:bg-paper/60" : ""}`}
+                  key={c.key}
+                  onClick={() => open(c.key)}
+                  className="cursor-pointer border-b border-black/5 last:border-0 hover:bg-paper/60"
                 >
                   <td className="px-4 py-3">
                     <p className="font-semibold text-ink">{c.name}</p>
@@ -155,9 +174,24 @@ export default function ClientsView() {
                 </div>
               </div>
             ) : (
-              <button onClick={() => setEditing(true)} className="rounded-full border border-black/12 px-4 py-1.5 text-xs font-bold hover:border-gold">
-                Edit details
-              </button>
+              selected.registered ? (
+                <button onClick={() => setEditing(true)} className="rounded-full border border-black/12 px-4 py-1.5 text-xs font-bold hover:border-gold">
+                  Edit details
+                </button>
+              ) : (
+                <div className="rounded-xl border border-black/8 bg-paper/60 px-4 py-3">
+                  <p className="text-xs text-charcoal/60">
+                    Walk-in — no account yet, so no loyalty points are collected.
+                  </p>
+                  <button
+                    onClick={registerWalkIn}
+                    disabled={busy}
+                    className="btn-gold mt-2.5 rounded-full px-4 py-1.5 text-xs font-bold disabled:opacity-50"
+                  >
+                    {busy ? "Filing…" : "Create a client record"}
+                  </button>
+                </div>
+              )
             )}
           </div>
 

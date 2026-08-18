@@ -9,10 +9,13 @@
 import type { FastifyInstance } from "fastify";
 import { db, uid, now } from "../db.js";
 import { requireRole, audit } from "../security.js";
+import { salonToday } from "../time.js";
 import { barberRating } from "./reviews.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const today = () => new Date().toISOString().slice(0, 10);
+/* salon time: on Render (UTC) a plain toISOString() rolls the day over at
+   04:00 Dubai, so "today" would go blank while the salon was still open */
+const today = () => salonToday();
 
 type InvRow = {
   gross: number; tip: number; vat: number; total: number; discount: number;

@@ -21,6 +21,18 @@ type ClientRow = {
   visits: number; lastVisit: string | null; registered: number;
 };
 
+/** Turn stored service id lists into readable names, for a history list. */
+async function withServiceNames(rows: Record<string, unknown>[]) {
+  return Promise.all(rows.map(async (h) => ({
+    ...h,
+    paid: !!h.paid,
+    services: await Promise.all((JSON.parse(h.serviceIds as string) as string[]).map(
+      async (sid) =>
+        (await db.prepare("SELECT name FROM services WHERE id = ?").get(sid) as { name: string } | undefined)?.name ?? "Service"
+    )),
+  })));
+}
+
 export default async function clientRoutes(app: FastifyInstance) {
   /* -------- list / search -------- */
   app.get("/clients", async (req, reply) => {
@@ -49,16 +61,55 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     return Promise.all(rows.map(async (r) => ({
       ...r,
+      /* Every row needs something to open the detail panel with. Registered
+         clients have an account id; walk-ins only exist as a name on their
+         bookings, so they are keyed by that name. Without this the front desk
+         could not click a walk-in at all — and most of the book is walk-ins. */
+      key: r.id ?? `name:${encodeURIComponent(r.name)}`,
       registered: !!r.registered,
       loyalty: r.id ? await loyaltyForClient(r.id) : null,
     })));
   });
 
-  /* -------- one client: profile + booking history -------- */
+  /* -------- one client: profile + booking history --------
+     `id` is either an account id or `name:<walk-in name>`. Walk-ins have no
+     account, so their profile is assembled from their bookings.            */
   app.get("/clients/:id", async (req, reply) => {
     const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     const { id } = req.params as { id: string };
+
+    if (id.startsWith("name:")) {
+      const name = decodeURIComponent(id.slice(5));
+      const scoped = s.role === "admin" ? "AND b.branch_id = ?" : "";
+      const rows = (s.role === "admin"
+        ? await db.prepare(
+            `SELECT b.id, b.starts_at AS "startsAt", b.minutes, b.status, b.paid, b.branch_id AS "branchId",
+                    b.client_phone AS "clientPhone", u.name AS barber, b.service_ids AS "serviceIds"
+             FROM bookings b LEFT JOIN users u ON u.id = b.barber_id
+             WHERE b.client_name = ? AND b.client_id IS NULL ${scoped}
+             ORDER BY b.starts_at DESC LIMIT 50`
+          ).all(name, s.branchId)
+        : await db.prepare(
+            `SELECT b.id, b.starts_at AS "startsAt", b.minutes, b.status, b.paid, b.branch_id AS "branchId",
+                    b.client_phone AS "clientPhone", u.name AS barber, b.service_ids AS "serviceIds"
+             FROM bookings b LEFT JOIN users u ON u.id = b.barber_id
+             WHERE b.client_name = ? AND b.client_id IS NULL
+             ORDER BY b.starts_at DESC LIMIT 50`
+          ).all(name)) as Record<string, unknown>[];
+
+      if (rows.length === 0) return reply.code(404).send({ error: "Client not found" });
+
+      return {
+        id,
+        name,
+        phone: (rows.find((r) => r.clientPhone)?.clientPhone as string | null) ?? null,
+        userId: null,
+        registered: false,
+        loyalty: null,
+        history: await withServiceNames(rows),
+      };
+    }
 
     const user = await db.prepare(
       `SELECT id, name, phone, user_id AS "userId", created_at AS "createdAt" FROM users WHERE id = ? AND role = 'client'`
@@ -77,14 +128,9 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     return {
       ...user,
+      registered: true,
       loyalty: await loyaltyForClient(id),
-      history: await Promise.all(history.map(async (h) => ({
-        ...h,
-        paid: !!h.paid,
-        services: await Promise.all((JSON.parse(h.serviceIds as string) as string[]).map(
-          async (sid) => (await db.prepare("SELECT name FROM services WHERE id = ?").get(sid) as { name: string } | undefined)?.name ?? "Service"
-        )),
-      }))),
+      history: await withServiceNames(history),
     };
   });
 
@@ -107,6 +153,36 @@ export default async function clientRoutes(app: FastifyInstance) {
     );
     await audit("client_updated", { actorId: s.sub, actorRole: s.role, detail: id, ip: req.ip });
     return { ok: true };
+  });
+
+  /* -------- turn a walk-in into a client record, keeping their history ----
+     The front desk sees a regular who has never registered; one press files
+     them properly and back-links every past visit, so their loyalty starts
+     from what they have already spent rather than zero. */
+  app.post("/clients/register-walkin", async (req, reply) => {
+    const st = await requireRole(req, reply, ["admin", "super_admin"]);
+    if (!st) return;
+    const parsed = z.object({
+      name: z.string().min(2).max(80),
+      phone: z.string().max(24).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Name is required" });
+    const { name, phone } = parsed.data;
+
+    const existing = await db.prepare(
+      "SELECT id FROM bookings WHERE client_name = ? AND client_id IS NULL LIMIT 1"
+    ).get(name);
+    if (!existing) return reply.code(404).send({ error: "No walk-in visits found under that name" });
+
+    const id = uid();
+    await db.prepare("INSERT INTO users (id, role, name, phone, created_at) VALUES (?,?,?,?,?)")
+      .run(id, "client", name, phone ?? null, now());
+    const linked = await db.prepare(
+      "UPDATE bookings SET client_id = ? WHERE client_name = ? AND client_id IS NULL"
+    ).run(id, name);
+
+    await audit("walkin_registered", { actorId: st.sub, actorRole: st.role, detail: `${name} → ${id}`, ip: req.ip });
+    return reply.code(201).send({ id, name, linkedVisits: linked.changes });
   });
 
   /* -------- create a walk-in client record (front desk) -------- */

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   DAY_START,
   DAY_END,
@@ -10,21 +11,41 @@ import {
   type Appointment,
   type Barber,
 } from "@/lib/data";
+import { salonNowMinutes, salonToday } from "@/lib/time";
 
 const PX_PER_MIN = 1.5; // 90px per hour
-const NOW_MIN = 14 * 60 + 38; // demo "now" — 2:38 pm
 
 export default function Calendar({
   barbers,
   appointments,
   selectedId,
   onSelect,
+  date,
 }: {
   barbers: Barber[];
   appointments: Appointment[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** the day being shown — the now-line only belongs on today */
+  date?: string;
 }) {
+  /* Real salon time, refreshed every minute. Rendered on the client only:
+     the server has no idea what time it is where the salon is, and a
+     server-rendered value would be wrong the moment it hydrated. */
+  const [nowMin, setNowMin] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setNowMin(salonNowMinutes());
+    tick();
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const showNow =
+    nowMin !== null &&
+    (date ?? salonToday()) === salonToday() &&
+    nowMin >= DAY_START &&
+    nowMin <= DAY_END;
+
   const hours: number[] = [];
   for (let m = DAY_START; m <= DAY_END; m += 60) hours.push(m);
   const height = (DAY_END - DAY_START) * PX_PER_MIN;
@@ -143,14 +164,17 @@ export default function Calendar({
             );
           })}
 
-          {/* now line */}
-          <div
-            className="pointer-events-none absolute right-0 left-16 z-10 flex items-center"
-            style={{ top: (NOW_MIN - DAY_START) * PX_PER_MIN }}
-          >
-            <span className="-ml-1 h-2.5 w-2.5 rounded-full bg-[#c0392b]" />
-            <div className="h-px flex-1 bg-[#c0392b]/70" />
-          </div>
+          {/* now line — salon time, and only on today */}
+          {showNow && (
+            <div
+              className="pointer-events-none absolute right-0 left-16 z-10 flex items-center"
+              style={{ top: (nowMin! - DAY_START) * PX_PER_MIN }}
+              title={`Now — ${toLabel(nowMin!)} in Dubai`}
+            >
+              <span className="-ml-1 h-2.5 w-2.5 rounded-full bg-[#c0392b]" />
+              <div className="h-px flex-1 bg-[#c0392b]/70" />
+            </div>
+          )}
         </div>
       </div>
     </div>

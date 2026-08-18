@@ -1,14 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import Logo from "@/components/Logo";
 
-export default function ClientLogin() {
+export default function ClientLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <ClientLogin />
+    </Suspense>
+  );
+}
+
+function ClientLogin() {
   const router = useRouter();
+  const params = useSearchParams();
+  /* where to go after signing in — the booking page sends people here and
+     expects them back. Relative paths only, so this can't be used to bounce
+     someone off to another site. */
+  const raw = params.get("next") ?? "/book";
+  const next = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/book";
+
+  const [mode, setMode] = useState<"signin" | "register">("signin");
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,20 +38,35 @@ export default function ClientLogin() {
       setError("Enter your user ID and password.");
       return;
     }
+    if (mode === "register" && name.trim().length < 2) {
+      setError("Please tell us your name.");
+      return;
+    }
+    if (mode === "register" && password.length < 8) {
+      setError("Choose a password of at least 8 characters.");
+      return;
+    }
     setBusy(true);
     try {
-      const res = await fetch("/api/auth/client/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId: userId.trim(), password }),
-      });
+      const res = await fetch(
+        mode === "signin" ? "/api/auth/client/login" : "/api/auth/client/register",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            mode === "signin"
+              ? { userId: userId.trim(), password }
+              : { userId: userId.trim(), password, name: name.trim(), phone: phone.trim() || undefined }
+          ),
+        }
+      );
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        router.push("/book");
+        router.push(next);
         return;
       }
       setBusy(false);
-      setError(data.error ?? "Sign-in failed — try again.");
+      setError(data.error ?? (mode === "signin" ? "Sign-in failed — try again." : "Could not create that account."));
     } catch {
       setBusy(false);
       setError("Can't reach the server. Is the API running?");
@@ -51,15 +84,60 @@ export default function ClientLogin() {
         </Link>
         <div className="gold-rule mx-auto mt-5 w-24" />
         <p className="mt-5 text-center text-sm font-light text-ivory/50">
-          Welcome back. Your chair is waiting.
+          {mode === "signin" ? "Welcome back. Your chair is waiting." : "Create an account and your visits start counting."}
         </p>
+
+        {/* sign in / register */}
+        <div className="mx-auto mt-7 flex w-full max-w-xs overflow-hidden rounded-full border border-ivory/15">
+          {(["signin", "register"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => { setMode(m); setError(""); }}
+              className={`flex-1 py-2 text-[13px] font-semibold transition-colors ${
+                mode === m ? "bg-gold text-ink" : "text-ivory/55 hover:text-ivory"
+              }`}
+            >
+              {m === "signin" ? "Sign in" : "Create account"}
+            </button>
+          ))}
+        </div>
 
         <form
           onSubmit={submit}
           className="mt-10 rounded-2xl border border-ivory/10 bg-coal/80 p-8 shadow-panel backdrop-blur-sm"
         >
+          {mode === "register" && (
+            <>
+              <label className="mb-5 block">
+                <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Your name</span>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                  placeholder="e.g. Omar Al-Farsi"
+                  className="mt-2 w-full rounded-lg border border-ivory/15 bg-ink px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none transition-colors focus:border-gold"
+                />
+              </label>
+              <label className="mb-5 block">
+                <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
+                  Mobile <span className="normal-case tracking-normal text-ivory/30">— for your confirmation</span>
+                </span>
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  autoComplete="tel"
+                  placeholder="+971 50 000 0000"
+                  className="mt-2 w-full rounded-lg border border-ivory/15 bg-ink px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none transition-colors focus:border-gold"
+                />
+              </label>
+            </>
+          )}
+
           <label className="block">
-            <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">User ID</span>
+            <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
+              {mode === "signin" ? "User ID" : "Choose a user ID"}
+            </span>
             <input
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
@@ -101,7 +179,7 @@ export default function ClientLogin() {
             disabled={busy}
             className="btn-gold mt-7 w-full rounded-full py-3.5 text-sm tracking-widest uppercase disabled:opacity-60"
           >
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? (mode === "signin" ? "Signing in…" : "Creating…") : mode === "signin" ? "Sign in" : "Create account"}
           </button>
 
           <div className="my-6 flex items-center gap-4">
@@ -127,9 +205,13 @@ export default function ClientLogin() {
             <Link href="#" className="text-ivory/45 transition-colors hover:text-gold-2">
               Forgot password?
             </Link>
-            <Link href="#" className="font-semibold text-gold-2 transition-colors hover:text-gold">
-              Create new account
-            </Link>
+            <button
+              type="button"
+              onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}
+              className="font-semibold text-gold-2 transition-colors hover:text-gold"
+            >
+              {mode === "signin" ? "Create new account" : "I already have an account"}
+            </button>
           </div>
         </form>
 

@@ -11,6 +11,8 @@ import CouponsView from "@/components/console/CouponsView";
 import OrdersView from "@/components/console/OrdersView";
 import ClientsView from "@/components/console/ClientsView";
 import Logo, { LogoMark } from "@/components/Logo";
+import MonthView from "@/components/console/MonthView";
+import { salonToday, relativeDay, prettyDate } from "@/lib/time";
 import {
   barbers,
   branches,
@@ -62,17 +64,21 @@ export default function Console() {
   const [me, setMe] = useState<{ name: string; role: string } | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [view, setView] = useState<View>("calendar");
+  /* the day being looked at — the console used to be hardwired to today */
+  const [date, setDate] = useState<string>(salonToday());
+  const [mode, setMode] = useState<"day" | "month">("day");
+  const [loadingDay, setLoadingDay] = useState(false);
 
   /* load today's bookings from the API; fall back to demo data if signed out */
   useEffect(() => {
     (async () => {
+      setLoadingDay(true);
       try {
-        const today = new Date().toISOString().slice(0, 10);
         const [meRes, res] = await Promise.all([
           fetch("/api/auth/me"),
-          fetch(`/api/bookings?date=${today}&branchId=${branchId}`),
+          fetch(`/api/bookings?date=${date}&branchId=${branchId}`),
         ]);
-        if (meRes.ok) setMe(await meRes.json());
+        setMe(meRes.ok ? await meRes.json() : null);
         if (res.ok) {
           const data: ApiBooking[] = await res.json();
           setAppointments(data.map(fromApi));
@@ -81,9 +87,29 @@ export default function Console() {
         }
       } catch {
         /* API offline — keep demo data */
+      } finally {
+        setLoadingDay(false);
       }
     })();
-  }, [branchId]);
+  }, [branchId, date]);
+
+  /* step a day at a time; the archive goes back as far as the data does */
+  const shiftDay = (n: number) => {
+    const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+    setDate(new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10));
+    setSelectedId(null);
+  };
+
+  /* Only ever offer what this role can actually open. While the session is
+     still loading `me` is null, and we show just the calendar rather than
+     flashing tabs the user will never be allowed to use. */
+  const visibleNav = NAV.filter((n) => (me ? n.roles.includes(me.role) : n.view === "calendar"));
+
+  /* if the role changes under us (lock screen → different code), drop back to
+     a view they are allowed to see */
+  useEffect(() => {
+    if (me && !visibleNav.some((n) => n.view === view)) setView("calendar");
+  }, [me, view, visibleNav]);
 
   const branch = branches.find((b) => b.id === branchId)!;
   const branchBarbers = barbers.filter((b) => b.branchId === branchId);
@@ -122,7 +148,7 @@ export default function Console() {
         </Link>
         <div className="gold-rule mx-auto mt-4 w-8 lg:w-full" />
         <div className="mt-6 flex flex-1 flex-col gap-1.5">
-          {NAV.filter((n) => !me || n.roles.includes(me.role)).map((n) => (
+          {visibleNav.map((n) => (
             <button
               key={n.label}
               onClick={() => { setView(n.view); setSelectedId(null); }}
@@ -161,16 +187,57 @@ export default function Console() {
         <header className="flex flex-wrap items-center gap-3 border-b border-[#e2ddd0] bg-white px-5 py-3">
           {view === "calendar" ? (
             <>
-              <button className="rounded-full border border-black/12 px-4 py-1.5 text-[13px] font-bold hover:border-black/35">
+              <button
+                onClick={() => { setDate(salonToday()); setMode("day"); setSelectedId(null); }}
+                className={`rounded-full border px-4 py-1.5 text-[13px] font-bold ${
+                  date === salonToday() && mode === "day"
+                    ? "border-gold bg-gold/10 text-gold-dim"
+                    : "border-black/12 hover:border-black/35"
+                }`}
+              >
                 Today
               </button>
-              <div className="flex items-center gap-1">
-                <IconBtn label="Previous day">‹</IconBtn>
-                <span className="min-w-40 text-center text-sm font-bold">
-                  {new Date().toLocaleDateString("en-AE", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-                </span>
-                <IconBtn label="Next day">›</IconBtn>
+
+              {mode === "day" && (
+                <div className="flex items-center gap-1">
+                  <IconBtn label="Previous day" onClick={() => shiftDay(-1)}>‹</IconBtn>
+                  {/* a real date field, so you can jump years back without clicking */}
+                  <label className="relative min-w-44 text-center text-sm font-bold">
+                    <span className={date === salonToday() ? "" : "text-gold-dim"}>
+                      {relativeDay(date)}
+                      <span className="ml-1.5 font-normal text-charcoal/50">
+                        {prettyDate(date, { weekday: undefined })}
+                      </span>
+                    </span>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => { if (e.target.value) { setDate(e.target.value); setSelectedId(null); } }}
+                      aria-label="Jump to a date"
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                    />
+                  </label>
+                  <IconBtn label="Next day" onClick={() => shiftDay(1)}>›</IconBtn>
+                </div>
+              )}
+
+              {/* day / month toggle — the month grid is how you find a past day */}
+              <div className="flex overflow-hidden rounded-full border border-black/12 text-[12px] font-bold">
+                {(["day", "month"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => { setMode(m); setSelectedId(null); }}
+                    className={`px-3.5 py-1.5 capitalize transition-colors ${
+                      mode === m ? "bg-ink text-ivory" : "text-charcoal/60 hover:text-ink"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
               </div>
+              {loadingDay && mode === "day" && (
+                <span className="text-xs text-charcoal/40">loading…</span>
+              )}
             </>
           ) : (
             <h1 className="font-display text-xl font-semibold text-ink">{TITLES[view]}</h1>
@@ -224,13 +291,21 @@ export default function Console() {
         {view === "orders" && <OrdersView />}
 
         {/* calendar + panel */}
-        {view === "calendar" && (
+        {view === "calendar" && mode === "month" && (
+          <MonthView
+            branchId={branchId}
+            onPickDay={(d) => { setDate(d); setMode("day"); setSelectedId(null); }}
+          />
+        )}
+
+        {view === "calendar" && mode === "day" && (
         <div className="relative flex min-h-0 flex-1">
           <Calendar
             barbers={branchBarbers}
             appointments={appointments}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            date={date}
           />
           {selected && (
             <div className="absolute inset-0 z-20 md:static md:z-auto md:flex">
@@ -268,10 +343,13 @@ export default function Console() {
   );
 }
 
-function IconBtn({ children, label }: { children: React.ReactNode; label: string }) {
+function IconBtn({
+  children, label, onClick,
+}: { children: React.ReactNode; label: string; onClick?: () => void }) {
   return (
     <button
       aria-label={label}
+      onClick={onClick}
       className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-charcoal/60 transition-colors hover:bg-black/5 hover:text-ink"
     >
       {children}

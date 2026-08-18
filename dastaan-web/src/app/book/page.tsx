@@ -11,7 +11,7 @@ import {
   type Service,
 } from "@/lib/data";
 
-const STEPS = ["Branch", "Services", "Barber", "Time"] as const;
+const STEPS = ["Branch", "Services", "Barber", "Time", "Details"] as const;
 
 /* Local calendar date — never toISOString(), which would roll over to
    tomorrow after 20:00 in Dubai and book people into the wrong day. */
@@ -42,6 +42,12 @@ export default function BookingWizard() {
   const [slot, setSlot] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
+  /* who is signed in — an appointment has to belong to somebody */
+  const [me, setMe] = useState<{ name: string; role: string } | null>(null);
+  const [meLoaded, setMeLoaded] = useState(false);
+  const [forWho, setForWho] = useState<"me" | "other">("me");
+  const [guest, setGuest] = useState({ name: "", phone: "", email: "" });
+
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
@@ -54,6 +60,14 @@ export default function BookingWizard() {
   const minutes = pickedServices.reduce((s, x) => s + x.minutes, 0);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => localDay(i)), []);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setMe(d && d.role === "client" ? d : null))
+      .catch(() => setMe(null))
+      .finally(() => setMeLoaded(true));
+  }, []);
 
   /* Ask the server what is actually free. Re-asked whenever the barber, the
      day or the length of the appointment changes — a longer appointment needs
@@ -86,7 +100,8 @@ export default function BookingWizard() {
     (step === 0 && !!branchId) ||
     (step === 1 && picked.length > 0) ||
     (step === 2 && !!barberId) ||
-    (step === 3 && !!slot && chosenStillFree && !booking);
+    (step === 3 && !!slot && chosenStillFree) ||
+    (step === 4 && !!me && (forWho === "me" || guest.name.trim().length >= 2) && !booking);
 
   const toggleService = (id: string) =>
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -109,6 +124,12 @@ export default function BookingWizard() {
             {days.indexOf(date) > 1 ? "" : ` · ${new Date(`${date}T12:00:00`).toLocaleDateString("en-AE", { weekday: "long", day: "numeric", month: "long" })}`}
             <br />
             {b ? `with ${b.name}` : "with the first available barber"} at {branch?.name}
+            {forWho === "other" && guest.name.trim() && (
+              <>
+                <br />
+                <span className="text-gold-2">for {guest.name.trim()}</span>
+              </>
+            )}
           </p>
           <div className="gold-rule mx-auto my-8 w-24" />
           <p className="text-xs leading-relaxed tracking-wider text-ivory/35">
@@ -274,6 +295,117 @@ export default function BookingWizard() {
               </>
             )}
 
+            {step === 4 && (
+              <>
+                <h1 className="font-display text-4xl font-medium text-ivory">Almost there</h1>
+
+                {!meLoaded ? (
+                  <p className="mt-6 text-sm text-ivory/45">One moment…</p>
+                ) : !me ? (
+                  /* An appointment has to belong to an account: it is how the
+                     salon reaches you, how the reminder is sent, and how your
+                     visits are counted. */
+                  <div className="mt-8 rounded-2xl border border-ivory/12 bg-coal p-8">
+                    <p className="text-[15px] font-semibold text-ivory">Sign in to confirm</p>
+                    <p className="mt-2 max-w-md text-sm leading-relaxed text-ivory/55">
+                      We keep your appointment against your account so we can send the
+                      confirmation and the reminder, and so your visits count towards
+                      your loyalty card. It takes a moment.
+                    </p>
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <Link
+                        href="/login?next=/book"
+                        className="btn-gold rounded-full px-7 py-3 text-sm tracking-wide"
+                      >
+                        Sign in
+                      </Link>
+                      <Link
+                        href="/login?next=/book"
+                        className="btn-ghost rounded-full px-7 py-3 text-sm tracking-wide"
+                      >
+                        Create an account
+                      </Link>
+                    </div>
+                    <p className="mt-5 text-xs text-ivory/30">
+                      Your choices are kept — you will come straight back here.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="mt-2 text-sm text-ivory/45">Signed in as {me.name}</p>
+
+                    <p className="mt-8 text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
+                      Who is this appointment for?
+                    </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {([
+                        ["me", "Myself", me.name],
+                        ["other", "Someone else", "A friend, or one of the family"],
+                      ] as const).map(([val, title, sub]) => (
+                        <button
+                          key={val}
+                          onClick={() => setForWho(val)}
+                          className={`rounded-2xl border p-5 text-left transition-all ${
+                            forWho === val
+                              ? "border-gold bg-gold/8"
+                              : "border-ivory/12 bg-coal hover:border-ivory/30"
+                          }`}
+                        >
+                          <p className="text-sm font-semibold text-ivory">{title}</p>
+                          <p className="mt-1 text-xs text-ivory/45">{sub}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    {forWho === "other" && (
+                      <div className="animate-fade-up mt-7 space-y-4">
+                        <p className="text-xs text-ivory/40">
+                          The appointment stays on your account, but we will put their
+                          name against the chair and send the reminder to them.
+                        </p>
+                        <label className="block">
+                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Their name</span>
+                          <input
+                            value={guest.name}
+                            onChange={(e) => setGuest({ ...guest, name: e.target.value })}
+                            placeholder="e.g. Yusuf Habib"
+                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Their mobile</span>
+                          <input
+                            value={guest.phone}
+                            onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
+                            placeholder="+971 50 000 0000"
+                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
+                            Their email <span className="normal-case tracking-normal text-ivory/30">— optional</span>
+                          </span>
+                          <input
+                            type="email"
+                            value={guest.email}
+                            onChange={(e) => setGuest({ ...guest, email: e.target.value })}
+                            placeholder="name@example.com"
+                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {error && (
+                  <p className="animate-shake mt-6 max-w-md rounded-lg border border-st-cancel/40 bg-st-cancel/10 px-4 py-2.5 text-sm text-[#e08a80]">
+                    {error}
+                  </p>
+                )}
+              </>
+            )}
+
             {step === 3 && (
               <>
                 <h1 className="font-display text-4xl font-medium text-ivory">Pick a time</h1>
@@ -385,8 +517,8 @@ export default function BookingWizard() {
               <button
                 disabled={!canNext}
                 onClick={async () => {
-                  if (step !== 3) return setStep(step + 1);
-                  if (!slot) return;
+                  if (step !== 4) return setStep(step + 1);
+                  if (!slot || !me) return;
                   setBooking(true);
                   setError(null);
                   try {
@@ -396,6 +528,14 @@ export default function BookingWizard() {
                       body: JSON.stringify({
                         branchId, barberId, serviceIds: picked,
                         startsAt: `${date}T${slot}:00`,
+                        ...(forWho === "other"
+                          ? {
+                              forSomeoneElse: true,
+                              clientName: guest.name.trim(),
+                              clientPhone: guest.phone.trim() || undefined,
+                              clientEmail: guest.email.trim() || undefined,
+                            }
+                          : {}),
                       }),
                     });
 
@@ -406,10 +546,12 @@ export default function BookingWizard() {
                        reload it and let them pick again. */
                     const body = await res.json().catch(() => ({}));
                     if (res.status === 401) {
-                      setError("Please sign in to confirm your booking.");
+                      setError("Your session has expired — please sign in again.");
+                      setMe(null);
                     } else if (res.status === 409) {
                       setError(body.error ?? "That slot has just been taken — please pick another.");
                       setSlot(null);
+                      setStep(3);
                       await loadSlots();
                     } else {
                       setError(body.error ?? "Couldn’t confirm that booking. Please try again.");
@@ -423,7 +565,7 @@ export default function BookingWizard() {
                 }}
                 className="btn-gold flex-1 rounded-full py-3 text-sm tracking-widest uppercase disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {step === 3 ? (booking ? "Confirming…" : "Confirm booking") : "Continue"}
+                {step === 4 ? (booking ? "Confirming…" : "Confirm booking") : "Continue"}
               </button>
             </div>
           </aside>

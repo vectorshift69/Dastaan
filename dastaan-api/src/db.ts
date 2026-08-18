@@ -245,6 +245,7 @@ export async function migrate() {
     client_id TEXT REFERENCES users(id),
     client_name TEXT NOT NULL,
     client_phone TEXT,
+    client_email TEXT,
     service_ids TEXT NOT NULL,
     starts_at TEXT NOT NULL,
     minutes INTEGER NOT NULL,
@@ -441,6 +442,14 @@ export async function migrate() {
     count INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT
   );
+  `);
+
+  /* ---- additive migrations ----
+     CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so columns
+     added after the first deploy need saying explicitly. IF NOT EXISTS makes
+     each one safe to run on every boot. */
+  await db.exec(`
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_email TEXT;
   `);
 }
 
