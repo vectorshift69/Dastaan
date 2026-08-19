@@ -89,15 +89,15 @@ export const services: Service[] = [
 ];
 
 export const barbers: Barber[] = [
-  { id: "br1", name: "Aqib Khan", title: "Master Barber", rating: 4.9, initials: "AK", tone: "#5b4a2f", branchId: "b1" },
-  { id: "br3", name: "Mouawia Majzoub", title: "Master Barber", rating: 5.0, initials: "MM", tone: "#4a3f5b", branchId: "b1" },
-  { id: "br2", name: "Ali Raza", title: "Senior Barber", rating: 4.8, initials: "AR", tone: "#3f4a5b", branchId: "b1" },
-  { id: "br7", name: "Bilal Ahmed", title: "Senior Barber", rating: 4.9, initials: "BA", tone: "#3f5b57", branchId: "b1" },
+  { id: "br1", name: "Aqib Khan", title: "Barber", rating: 4.9, initials: "AK", tone: "#5b4a2f", branchId: "b1" },
+  { id: "br3", name: "Mouawia Majzoub", title: "Barber", rating: 5.0, initials: "MM", tone: "#4a3f5b", branchId: "b1" },
+  { id: "br2", name: "Ali Raza", title: "Barber", rating: 4.8, initials: "AR", tone: "#3f4a5b", branchId: "b1" },
+  { id: "br7", name: "Bilal Ahmed", title: "Barber", rating: 4.9, initials: "BA", tone: "#3f5b57", branchId: "b1" },
   { id: "br4", name: "Azeem Aslam", title: "Barber", rating: 4.7, initials: "AA", tone: "#2f5b4a", branchId: "b1" },
   { id: "br8", name: "Tariq Mehmood", title: "Barber", rating: 4.7, initials: "TM", tone: "#54463f", branchId: "b1" },
-  { id: "br5", name: "Yousuf Mirza", title: "Senior Barber", rating: 4.8, initials: "YM", tone: "#5b2f39", branchId: "b2" },
+  { id: "br5", name: "Yousuf Mirza", title: "Barber", rating: 4.8, initials: "YM", tone: "#5b2f39", branchId: "b2" },
   { id: "br6", name: "Hassan Adel", title: "Barber", rating: 4.6, initials: "HA", tone: "#39505b", branchId: "b2" },
-  { id: "br9", name: "Imran Sheikh", title: "Master Barber", rating: 4.9, initials: "IS", tone: "#5b3f54", branchId: "b2" },
+  { id: "br9", name: "Imran Sheikh", title: "Barber", rating: 4.9, initials: "IS", tone: "#5b3f54", branchId: "b2" },
 ];
 
 export const dayAppointments: Appointment[] = [

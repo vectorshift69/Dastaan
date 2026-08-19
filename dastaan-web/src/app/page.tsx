@@ -34,7 +34,7 @@ export default function Home() {
               className="animate-fade-up mt-8 max-w-md text-[15px] leading-relaxed font-light text-ivory/65"
               style={{ animationDelay: "240ms" }}
             >
-              Master barbers, black-label service, and a chair that
+              Time-served barbers, black-label service, and a chair that
               remembers you. Dastaan is grooming as it was always meant to be —
               unhurried, precise, personal.
             </p>
@@ -53,7 +53,7 @@ export default function Home() {
               className="animate-fade-up mt-14 flex items-center gap-8 text-xs tracking-widest text-ivory/40 uppercase"
               style={{ animationDelay: "480ms" }}
             >
-              <span>12 master barbers</span>
+              <span>9 barbers</span>
               <span className="h-1 w-1 rounded-full bg-gold" />
               <span>2 branches</span>
               <span className="h-1 w-1 rounded-full bg-gold" />
@@ -113,10 +113,10 @@ export default function Home() {
         <div className="mx-auto max-w-7xl px-6 lg:px-10">
           <div className="md:max-w-[62%]">
             <p className="eyebrow">The hands</p>
-            <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">Master barbers</h2>
+            <h2 className="font-display mt-4 text-4xl font-medium md:text-6xl">Our barbers</h2>
             <p className="mt-5 max-w-md text-sm leading-relaxed font-light text-ivory/50">
-              Time-served barbers who know the difference between a fade and
-              a shape-up. Pick your chair.
+              Every one of them time-served, and every chair the same price.
+              Pick whoever you like — or let us choose.
             </p>
 
             <div className="mt-14 grid grid-cols-2 gap-6 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4">

@@ -33,6 +33,40 @@ const pretty = (hhmm: string) => {
 
 type Slot = { time: string; available: boolean };
 
+/** A labelled input. The label sits above the box and both fill their column,
+ *  so a row of fields lines up however long the labels are. */
+function Field({
+  label, value, onChange, placeholder, hint, required, type = "text", autoComplete, className = "",
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  hint?: string;
+  required?: boolean;
+  type?: string;
+  autoComplete?: string;
+  className?: string;
+}) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="block text-[11px] font-semibold tracking-[0.18em] text-ivory/50 uppercase">
+        {label}
+        {required && <span className="ml-1 text-gold-2">*</span>}
+        {hint && <span className="ml-1.5 normal-case tracking-normal text-ivory/30">— {hint}</span>}
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className="mt-2 block w-full rounded-lg border border-ivory/15 bg-ink px-4 py-3 text-[15px] text-ivory outline-none transition-colors placeholder:text-ivory/25 focus:border-gold"
+      />
+    </label>
+  );
+}
+
 export default function BookingWizard() {
   const [step, setStep] = useState(0);
   const [branchId, setBranchId] = useState<string | null>(null);
@@ -358,41 +392,43 @@ export default function BookingWizard() {
                     </div>
 
                     {forWho === "other" && (
-                      <div className="animate-fade-up mt-7 space-y-4">
-                        <p className="text-xs text-ivory/40">
-                          The appointment stays on your account, but we will put their
-                          name against the chair and send the reminder to them.
+                      <div className="animate-fade-up mt-7 max-w-xl rounded-2xl border border-ivory/12 bg-coal/70 p-6">
+                        <p className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
+                          Their details
                         </p>
-                        <label className="block">
-                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Their name</span>
-                          <input
+                        <p className="mt-2 text-xs leading-relaxed text-ivory/40">
+                          The appointment stays on your account. We put their name against
+                          the chair and send the reminder to them.
+                        </p>
+
+                        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                          <Field
+                            label="Their name"
+                            required
+                            className="sm:col-span-2"
                             value={guest.name}
-                            onChange={(e) => setGuest({ ...guest, name: e.target.value })}
+                            onChange={(v) => setGuest({ ...guest, name: v })}
                             placeholder="e.g. Yusuf Habib"
-                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                            autoComplete="name"
                           />
-                        </label>
-                        <label className="block">
-                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Their mobile</span>
-                          <input
+                          <Field
+                            label="Their mobile"
                             value={guest.phone}
-                            onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
+                            onChange={(v) => setGuest({ ...guest, phone: v })}
                             placeholder="+971 50 000 0000"
-                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                            autoComplete="tel"
+                            type="tel"
                           />
-                        </label>
-                        <label className="block">
-                          <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
-                            Their email <span className="normal-case tracking-normal text-ivory/30">— optional</span>
-                          </span>
-                          <input
-                            type="email"
+                          <Field
+                            label="Their email"
+                            hint="optional"
                             value={guest.email}
-                            onChange={(e) => setGuest({ ...guest, email: e.target.value })}
+                            onChange={(v) => setGuest({ ...guest, email: v })}
                             placeholder="name@example.com"
-                            className="mt-2 w-full max-w-md rounded-lg border border-ivory/15 bg-coal px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none focus:border-gold"
+                            autoComplete="email"
+                            type="email"
                           />
-                        </label>
+                        </div>
                       </div>
                     )}
                   </>

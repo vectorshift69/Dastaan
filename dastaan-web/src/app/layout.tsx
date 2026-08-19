@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "DASTAAN — Gentlemen's Grooming · Dubai",
   description:
-    "Dastaan — precision cuts, beard work, hot-towel shaves and grooming by master barbers in Dubai, plus a curated store. Book your appointment online.",
+    "Dastaan — precision cuts, beard work, hot-towel shaves and grooming by time-served barbers in Dubai, plus a curated store. Book your appointment online.",
 };
 
 export const viewport: Viewport = {
