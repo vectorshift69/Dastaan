@@ -22,7 +22,27 @@ const modes = (process.env.PAYMENT_MODES ?? "online,terminal")
   .map((m) => m.trim().toLowerCase())
   .filter(Boolean);
 
+/* ------------------------------------------------------------------ */
+/* Sign in with Google.                                                */
+/*                                                                     */
+/* Same switch pattern as payments: with no client id configured the   */
+/* feature is simply off — the routes answer 503 and the web app does  */
+/* not draw the button. That is better than a button that does         */
+/* nothing, which is what shipped before this was wired up.            */
+/* ------------------------------------------------------------------ */
+const googleClientId = process.env.GOOGLE_CLIENT_ID ?? "";
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
+
 export const config = {
+  auth: {
+    google: {
+      enabled: Boolean(googleClientId && googleClientSecret),
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+      /** must match a redirect URI registered in the Google Cloud console */
+      redirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
+    },
+  },
   payments: {
     /** master go/no-go for anything that moves money */
     enabled: truthy(process.env.PAYMENTS_ENABLED),
@@ -38,6 +58,10 @@ export const config = {
 
 /** Public shape — safe to hand to the browser. No keys, no URLs. */
 export const publicConfig = () => ({
+  auth: {
+    /* the web app draws the Google button only when this is true */
+    google: config.auth.google.enabled,
+  },
   payments: {
     enabled: config.payments.enabled,
     online: config.payments.online,

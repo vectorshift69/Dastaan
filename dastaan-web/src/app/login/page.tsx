@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import Logo from "@/components/Logo";
+import { useConfig } from "@/lib/config";
 
 export default function ClientLoginPage() {
   return (
@@ -22,14 +23,27 @@ function ClientLogin() {
   const raw = params.get("next") ?? "/book";
   const next = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/book";
 
+  const cfg = useConfig();
   const [mode, setMode] = useState<"signin" | "register">("signin");
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  /* the API bounces back here with ?error=<code> if Google didn't work out */
+  const OAUTH_ERRORS: Record<string, string> = {
+    cancelled: "Google sign-in was cancelled.",
+    expired: "That took too long — please try again.",
+    bad_state: "Sign-in could not be verified. Please try again.",
+    email_unverified: "Your Google email isn't verified, so we can't use it to sign in.",
+    not_a_client_account: "That email belongs to a staff account. Staff sign in at the salon keypad.",
+    google_off: "Google sign-in isn't switched on yet.",
+  };
+  const oauthError = params.get("error");
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +54,14 @@ function ClientLogin() {
     }
     if (mode === "register" && name.trim().length < 2) {
       setError("Please tell us your name.");
+      return;
+    }
+    if (mode === "register" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (mode === "register" && phone.trim().length < 7) {
+      setError("Enter a mobile number we can send your confirmation to.");
       return;
     }
     if (mode === "register" && password.length < 8) {
@@ -56,7 +78,7 @@ function ClientLogin() {
           body: JSON.stringify(
             mode === "signin"
               ? { userId: userId.trim(), password }
-              : { userId: userId.trim(), password, name: name.trim(), phone: phone.trim() || undefined }
+              : { userId: userId.trim(), password, name: name.trim(), email: email.trim(), phone: phone.trim() }
           ),
         }
       );
@@ -120,6 +142,17 @@ function ClientLogin() {
                 />
               </label>
               <label className="mb-5 block">
+                <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  placeholder="name@example.com"
+                  className="mt-2 w-full rounded-lg border border-ivory/15 bg-ink px-4 py-3 text-[15px] text-ivory placeholder:text-ivory/25 outline-none transition-colors focus:border-gold"
+                />
+              </label>
+              <label className="mb-5 block">
                 <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/50 uppercase">
                   Mobile <span className="normal-case tracking-normal text-ivory/30">— for your confirmation</span>
                 </span>
@@ -168,9 +201,9 @@ function ClientLogin() {
             </div>
           </label>
 
-          {error && (
+          {(error || oauthError) && (
             <p className="animate-shake mt-4 rounded-lg border border-st-cancel/40 bg-st-cancel/10 px-4 py-2.5 text-sm text-[#e08a80]">
-              {error}
+              {error || OAUTH_ERRORS[oauthError!] || "Google sign-in didn't work. Please try again."}
             </p>
           )}
 
@@ -182,14 +215,18 @@ function ClientLogin() {
             {busy ? (mode === "signin" ? "Signing in…" : "Creating…") : mode === "signin" ? "Sign in" : "Create account"}
           </button>
 
+          {cfg.auth.google && (
           <div className="my-6 flex items-center gap-4">
             <div className="h-px flex-1 bg-ivory/10" />
             <span className="text-[11px] tracking-widest text-ivory/35 uppercase">or</span>
             <div className="h-px flex-1 bg-ivory/10" />
           </div>
+          )}
 
-          <button
-            type="button"
+          {cfg.auth.google && (
+
+          <a
+            href={`/api/auth/google/start?next=${encodeURIComponent(next)}`}
             className="btn-ghost flex w-full items-center justify-center gap-3 rounded-full py-3 text-sm"
           >
             <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden>
@@ -198,8 +235,9 @@ function ClientLogin() {
               <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
               <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4 5.5l6.3 5.3C41.4 35.4 44 30.1 44 24c0-1.3-.1-2.6-.4-3.9z"/>
             </svg>
-            Sign in with Google
-          </button>
+            {mode === "signin" ? "Sign in with Google" : "Sign up with Google"}
+          </a>
+          )}
 
           <div className="mt-7 flex items-center justify-between text-[13px]">
             <Link href="#" className="text-ivory/45 transition-colors hover:text-gold-2">

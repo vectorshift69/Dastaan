@@ -48,6 +48,17 @@ services:
         sync: false
       - key: GOOGLE_REVIEW_URL
         sync: false
+      # Sign in with Google (clients only). Leave these unset and the feature
+      # is simply off — the API answers 503 and the web app hides the button.
+      # Create the credentials at console.cloud.google.com → APIs & Services
+      # → Credentials → OAuth client ID → Web application.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # must match an authorised redirect URI on that OAuth client exactly
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
       # payments stay off until the payment service is deployed
       - key: PAYMENTS_ENABLED
         value: "0"

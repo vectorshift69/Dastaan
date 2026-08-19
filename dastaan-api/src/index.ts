@@ -7,6 +7,7 @@ import { migrate } from "./db.js";
 import { config, publicConfig } from "./config.js";
 import { originGuard } from "./security.js";
 import authRoutes from "./routes/auth.js";
+import googleAuthRoutes from "./routes/google-auth.js";
 import bookingRoutes from "./routes/bookings.js";
 import catalogRoutes from "./routes/catalog.js";
 import loyaltyRoutes from "./routes/loyalty.js";
@@ -55,6 +56,7 @@ app.get("/health", async () => ({ ok: true, service: "dastaan-api" }));
 app.get("/config", async () => publicConfig());
 
 await app.register(authRoutes);
+await app.register(googleAuthRoutes);
 await app.register(bookingRoutes);
 await app.register(catalogRoutes);
 await app.register(loyaltyRoutes);

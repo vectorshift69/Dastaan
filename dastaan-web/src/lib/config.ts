@@ -7,10 +7,14 @@
 import { useEffect, useState } from "react";
 
 export type AppConfig = {
+  auth: { google: boolean };
   payments: { enabled: boolean; online: boolean; terminal: boolean; currency: string };
 };
 
 const FALLBACK: AppConfig = {
+  /* If we can't reach the API, don't draw a Google button we can't honour —
+     a button that does nothing is worse than no button. */
+  auth: { google: false },
   payments: { enabled: false, online: false, terminal: false, currency: "AED" },
 };
 

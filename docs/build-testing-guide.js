@@ -18,6 +18,7 @@ const INK = "111111", GOLD = "8A6D1F", GREY = "6B6B6B", RULE = "D8D4C8";
 const PASS = "1E6B3A", FAIL = "9B2C1F", WARN = "8A5A00";
 const W = 9026;
 const RUN_DATE = "18–19 August 2026";
+const ENTITY = "GGC FZE";
 const EVIDENCE_DIR = __dirname + "/evidence";
 
 const P = (text, o = {}) => new Paragraph({
@@ -102,6 +103,7 @@ const ENV = [
   ["API service", "https://dastaan-api.onrender.com", "Render · Frankfurt · Free", "Live"],
   ["Database", "Supabase Postgres, project “dastaan”", "Frankfurt (eu-central-1)", "Live"],
   ["Card payments", "Switch PAYMENTS_ENABLED = 0", "Payments service not built yet", "Off by design"],
+  ["Sign in with Google", "Clients only · Google Cloud OAuth", "Switched on once credentials are set", "See section 5, P"],
 ];
 
 const STAFF = [
@@ -146,6 +148,24 @@ const DEFECTS = [
   ["D-4", "Medium",
    "The clash check mixed a local wall-clock time with a UTC instant, so whether it worked depended on the timezone the server happened to be running in. It was correct on Render by luck, not design.",
    "Fixed. All appointment arithmetic now stays in salon-local minutes-from-midnight and never converts to UTC."],
+  ["D-5", "High",
+   "The “Sign in with Google” button did nothing at all. It had no click handler and there was no OAuth code anywhere in the system, although the requirements ask for it.",
+   "Built. Server-side authorization-code flow with state, PKCE and nonce, issuing the same secure session as the password login. Clients only — a Google account cannot reach the staff console."],
+  ["D-6", "Medium",
+   "The red “now” line on the calendar was fixed at 2:38 pm and ignored the salon’s timezone entirely — it was placeholder data from the design stage.",
+   "Fixed. It reads Dubai time, moves every minute, and only appears when you are looking at today."],
+  ["D-7", "Medium",
+   "The calendar could only ever show today. Today, previous and next had no click handlers, so years of history in the database could not be reached from the screen.",
+   "Fixed. The arrows step day by day, the date is a picker, and a month view shows counts and takings per day."],
+  ["D-8", "Medium",
+   "Walk-in clients could not be opened. Having no account, their row was not clickable — and most of the client book is walk-ins.",
+   "Fixed. Walk-ins open with their full visit history, and one press files them as a client record with every past visit attached."],
+  ["D-9", "Low",
+   "The console showed every tab while the session was still loading, and all of them when signed out.",
+   "Fixed. Only permitted tabs are drawn, and the view resets if the role changes."],
+  ["D-10", "Low",
+   "Barbers were labelled Master, Senior and plain Barber, and the site claimed 12 of them. The requirements define one barber role and there are nine.",
+   "Fixed. Every barber is simply “Barber”, and the count is correct."],
 ];
 
 const NOTES = [
@@ -292,6 +312,37 @@ const SECTIONS = [
 ["N6","Confirm turnover cannot leak to staff.","Only the owner can read it, whatever route is used.","Reception and barbers refused at the server, not merely hidden in the menu.","Pass"],
 ["N7","Check what the public availability endpoint gives away.","Only “free” or “busy” — no client names, services or phone numbers.","Confirmed: the response is a list of times and a true/false. Nothing identifying.","Pass"],
 ]},
+{ title: "P · Signing up and signing in as a client",
+  intro: "Clients can register with their own details or use Google. Google is for clients only — staff always use the keypad in the salon, and a Google account cannot reach the console.",
+  tests: [
+["P1","Open /login and choose Create account.","Asks for name, email, mobile, a user ID and a password.","All five present. Email and mobile are required.","Pass"],
+["P2","Try to register without an email.","Refused.","HTTP 400.","Pass"],
+["P3","Register with an email that already has an account.","Refused, and told to sign in instead.","HTTP 409 — “There is already an account with that email — try signing in”.","Pass"],
+["P4","Register fully, then sign out and sign back in.","Works both ways.","Registration returns the client and signs them in; the same user ID and password sign in again.","Pass"],
+["P5","Look for the Google button.","Shown only when Google sign-in is switched on. Never a button that does nothing.","With no credentials configured the button is not drawn at all and the API answers 503.","Pass"],
+["P6","With Google switched on, press the button.","Goes to Google’s account chooser.","Redirects to accounts.google.com with a one-time state and a PKCE challenge.","Pass"],
+["P7","Sign in with a Google account whose email already has a password account.","Attaches to the existing account. No duplicate, no second loyalty balance.","Verified against the database: the existing account is linked, not copied.","Pass"],
+["P8","Sign in with a brand new Google account.","An account is created and they are signed straight in.","A user ID is generated from the email so nothing is asked of them.","Pass"],
+["P9","Complete a Google sign-in end to end on the live site.","Signed in and returned to where you started.","NOT TESTED — this needs live Google credentials, which were added after this run. Please complete it and record the result here.","Note"],
+["P10","Cancel at Google’s screen.","Returned to the login page with a plain message, not an error page.","“Google sign-in was cancelled.”","Pass"],
+["P11","Tamper with the callback: change the one-time value in the address bar.","Refused.","Rejected — the sign-in cannot be verified. This is what stops someone logging you into their account.","Pass"],
+]},
+{ title: "Q · The diary beyond today",
+  intro: "The salon’s history lives in the database. These tests are about reaching it from the screen.",
+  tests: [
+["Q1","Look at the red line on the calendar.","Sits at the correct Dubai time and moves as the day passes.","Reads salon time and refreshes every minute.","Pass"],
+["Q2","Look at yesterday, then a date last month.","The arrows move a day at a time; clicking the date opens a picker for any date.","Both work. A date ten days back returned that day’s nine appointments.","Pass"],
+["Q3","Switch to the Month view.","A month at a glance with appointments per day, and takings per day for the owner.","22 trading days shown with counts, no-shows and cancellations.","Pass"],
+["Q4","As reception, open the Month view.","Counts but no money — turnover is the owner’s.","Revenue omitted entirely for reception, enforced by the server.","Pass"],
+["Q5","As reception, try to view another branch’s month.","Your own branch is shown whatever you ask for.","Asked for City Centre, received Marina Walk.","Pass"],
+["Q6","Click a day in the month grid.","Opens that day’s diary.","Works, and Today returns you to the current day.","Pass"],
+]},
+{ title: "R · Walk-in clients",
+  tests: [
+["R1","Open Clients and click someone tagged as a walk-in.","Their panel opens with their visit history.","Opens with phone number and every past visit. Previously these rows could not be clicked at all.","Pass"],
+["R2","On a walk-in, press Create a client record.","They become a proper client, keeping every past visit.","Account created and six past visits attached to it.","Pass"],
+["R3","Check the same person in the list afterwards.","Now shows as registered with a loyalty balance.","Confirmed.","Pass"],
+]},
 { title: "O · Look and feel", tests: [
 ["O1","Open the home page.","Dastaan logo, gentlemen’s grooming wording, and a moving 3D grooming scene.","Logo mark and wordmark in ivory. “Est. MMXXVI · Gentlemen’s Grooming · Dubai”. Nav: Services, Barbers, Branches, Store, Loyalty.","Pass"],
 ["O2","Scroll down the home page and watch the 3D scene.","The scissors, razor and comb glide to a new position as each section comes up, like slides.","Confirmed — the scene tracks the scroll into the Services section and onward. It needs about 8 seconds to appear on a cold load; it is fetched separately so the text is readable immediately.","Pass"],
@@ -299,7 +350,7 @@ const SECTIONS = [
 ["O4","Sign in and look at the console.","The same logo, readable against the console’s lighter chrome.","The logo takes the colour of the surrounding text automatically. No second image file, no theme switch.","Pass"],
 ["O5","Look at the browser tab.","The Dastaan “D” icon.","Ivory D on a dark rounded square.","Pass"],
 ["O6","Open the site on a phone.","Everything usable: menu collapses, booking works, console scrolls.","NOT TESTED in this run — the test browser could not be resized. The layout is built responsive and was checked during development, but please confirm on a real handset and record the result here.","Note"],
-["O7","Check the wording throughout.","Gents salon language — barbers, not stylists. No ladies’ services.","“Master barbers” throughout; the 12 services are cuts, beards, shaves and grooming only.","Pass"],
+["O7","Check the wording throughout.","Gents salon language — barbers, not stylists, and no ranks. No ladies’ services.","Every barber is simply “Barber”; the 12 services are cuts, beards, shaves and grooming only.","Pass"],
 ]},
 ];
 
@@ -317,10 +368,11 @@ children.push(SPACER(1300),
 
 children.push(table([
   new TableRow({ children: [tcell("Prepared for", { w: 2600, bold: true }), tcell("Dastaan — salon owner and front-desk team", { w: 6426 })] }),
-  new TableRow({ children: [tcell("Prepared by", { w: 2600, bold: true }), tcell("Arbaaz Ghameriya · VectorShift", { w: 6426 })] }),
+  new TableRow({ children: [tcell("Prepared by", { w: 2600, bold: true }), tcell("GGC FZE · licence 4429769.01 · Sharjah Publishing City Free Zone", { w: 6426 })] }),
+  new TableRow({ children: [tcell("Contact", { w: 2600, bold: true }), tcell("Arbaaz Ghameriya", { w: 6426 })] }),
   new TableRow({ children: [tcell("Tested on", { w: 2600, bold: true }), tcell(RUN_DATE, { w: 6426 })] }),
   new TableRow({ children: [tcell("Environment", { w: 2600, bold: true }), tcell("Live deployment — Vercel, Render and Supabase", { w: 6426 })] }),
-  new TableRow({ children: [tcell("Version", { w: 2600, bold: true }), tcell("1.1 — adds the booking availability fix (D-1)", { w: 6426 })] }),
+  new TableRow({ children: [tcell("Version", { w: 2600, bold: true }), tcell("1.2 — adds Google sign-in, calendar history, walk-in records", { w: 6426 })] }),
 ], [2600, 6426]));
 children.push(SPACER(400));
 children.push(P("Every test in this document was carried out against the live system before the document was written. The “What happened” column records the actual result observed on the date above. Four defects were found; all four have been fixed and are listed in section 4.", { size: 19, italics: true, color: GREY }));

@@ -23,7 +23,11 @@ const registerSchema = z.object({
     .max(32)
     .regex(/^[a-zA-Z0-9_.-]+$/, "letters, numbers, _ . - only"),
   name: z.string().min(2).max(80),
-  phone: z.string().max(24).optional(),
+  /* Email matters beyond contact: it is what links a password account to the
+     same person arriving later through Google, instead of creating a second
+     account with its own loyalty balance. */
+  email: z.string().email().max(120),
+  phone: z.string().min(7).max(24),
   password: z.string().min(8).max(128),
 });
 
@@ -88,15 +92,21 @@ export default async function authRoutes(app: FastifyInstance) {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success)
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
-    const { userId, name, phone, password } = parsed.data;
+    const { userId, name, email, phone, password } = parsed.data;
 
     const exists = await db.prepare("SELECT id FROM users WHERE user_id = ?").get(userId.toLowerCase());
     if (exists) return reply.code(409).send({ error: "That user ID is taken" });
 
+    const emailTaken = await db.prepare(
+      "SELECT id FROM users WHERE lower(email) = ? AND role = 'client'"
+    ).get(email.toLowerCase());
+    if (emailTaken)
+      return reply.code(409).send({ error: "There is already an account with that email — try signing in" });
+
     const id = uid();
     await db.prepare(
-      "INSERT INTO users (id, role, user_id, name, phone, password_hash, created_at) VALUES (?,?,?,?,?,?,?)"
-    ).run(id, "client", userId.toLowerCase(), name, phone ?? null, await hashPassword(password), now());
+      "INSERT INTO users (id, role, user_id, name, email, phone, password_hash, created_at) VALUES (?,?,?,?,?,?,?,?)"
+    ).run(id, "client", userId.toLowerCase(), name, email.toLowerCase(), phone, await hashPassword(password), now());
 
     await issueSession(reply, { sub: id, role: "client", branchId: null, name });
     await audit("client_registered", { actorId: id, actorRole: "client", ip: req.ip });

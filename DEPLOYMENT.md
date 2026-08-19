@@ -180,6 +180,11 @@ TWILIO_FROM=
 REVIEW_URL=https://dastaan.vercel.app/review
 GOOGLE_REVIEW_URL=<the salon's Google review link>
 
+# Sign in with Google — clients only. Unset = feature off, button hidden.
+GOOGLE_CLIENT_ID=<from Google Cloud console>
+GOOGLE_CLIENT_SECRET=<from Google Cloud console>
+GOOGLE_REDIRECT_URI=https://dastaan-api.onrender.com/auth/google/callback
+
 # payments — keep OFF until the payments service is live
 PAYMENTS_ENABLED=0
 ```

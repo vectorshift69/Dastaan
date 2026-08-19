@@ -233,6 +233,9 @@ export async function migrate() {
     title TEXT,
     branch_id TEXT REFERENCES branches(id),
     password_hash TEXT,
+    email TEXT,
+    /* Google's stable subject id — never the email, which people change */
+    google_sub TEXT UNIQUE,
     code_hmac TEXT UNIQUE,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
@@ -450,6 +453,10 @@ export async function migrate() {
      each one safe to run on every boot. */
   await db.exec(`
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users (lower(email));
   `);
 }
 
