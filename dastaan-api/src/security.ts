@@ -17,7 +17,9 @@ if (!CODE_PEPPER || CODE_PEPPER.length < 32) {
   throw new Error("CODE_PEPPER missing or too short (min 32 chars). Set it in .env");
 }
 
-export type Role = "super_admin" | "admin" | "barber" | "client";
+/* shop_manager runs the online shop and its warehouse. Not salon staff: no
+   chair, no branch, no keypad code — an id and a password, like a client. */
+export type Role = "super_admin" | "admin" | "barber" | "client" | "shop_manager";
 export type Session = {
   sub: string;
   role: Role;

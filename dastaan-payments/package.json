@@ -1,0 +1,26 @@
+{
+  "name": "dastaan-payments",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dastaan payments service \u2014 the only place Stripe credentials live",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "fastify": "^5.11.3",
+    "pg": "^8.23.0",
+    "stripe": "^22.5.0",
+    "zod": "^4.4.3",
+    "@electric-sql/pglite": "^0.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/pg": "^8.21.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

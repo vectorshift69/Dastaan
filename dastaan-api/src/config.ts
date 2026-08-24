@@ -33,7 +33,32 @@ const modes = (process.env.PAYMENT_MODES ?? "online,terminal")
 const googleClientId = process.env.GOOGLE_CLIENT_ID ?? "";
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
 
+/* ------------------------------------------------------------------ */
+/* The registered business.                                            */
+/*                                                                     */
+/* A UAE tax invoice is only valid if it carries the supplier's legal   */
+/* name and Tax Registration Number, so the TRN is not decoration —     */
+/* without it the client cannot reclaim input VAT and the salon is      */
+/* non-compliant with FTA rules. It belongs on every invoice, every     */
+/* receipt, and anything else that looks like a bill.                   */
+/*                                                                     */
+/* Taken from the VAT registration certificate, and overridable by env  */
+/* so a correction never needs a code change. The TRN is printed on     */
+/* every invoice by law, so it is not a secret and is safe in the repo. */
+/* ------------------------------------------------------------------ */
+const business = {
+  legalName: process.env.BUSINESS_LEGAL_NAME ?? "DASTAAN LIFE BARBERS L.L.C",
+  trn: process.env.BUSINESS_TRN ?? "104235451200003",
+  /* the address on the VAT certificate, which is the one the FTA has —
+     branch addresses are separate and printed alongside it */
+  registeredAddress: process.env.BUSINESS_ADDRESS ?? "Zabeel 2, Dubai, UAE",
+  phone: process.env.BUSINESS_PHONE ?? "+971 54 719 6833",
+  /** UAE standard rate. A rate change is a config change, not a rewrite. */
+  vatRate: Number(process.env.VAT_RATE ?? 0.05),
+};
+
 export const config = {
+  business,
   auth: {
     google: {
       enabled: Boolean(googleClientId && googleClientSecret),
@@ -58,6 +83,12 @@ export const config = {
 
 /** Public shape — safe to hand to the browser. No keys, no URLs. */
 export const publicConfig = () => ({
+  /* printed on every invoice by law, so nothing here is private */
+  business: {
+    legalName: business.legalName,
+    trn: business.trn,
+    vatRate: business.vatRate,
+  },
   auth: {
     /* the web app draws the Google button only when this is true */
     google: config.auth.google.enabled,

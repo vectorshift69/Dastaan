@@ -13,7 +13,7 @@ type Order = {
 
 const NEXT: Record<Order["status"], { label: string; to: string }[]> = {
   placed: [{ label: "Mark paid", to: "paid" }, { label: "Cancel", to: "cancelled" }],
-  paid: [{ label: "Mark fulfilled", to: "fulfilled" }, { label: "Cancel", to: "cancelled" }],
+  paid: [{ label: "Mark shipped", to: "fulfilled" }, { label: "Cancel", to: "cancelled" }],
   fulfilled: [],
   cancelled: [],
 };

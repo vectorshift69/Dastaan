@@ -412,6 +412,8 @@ export default async function bookingRoutes(app: FastifyInstance) {
         "SELECT id, name, price FROM products WHERE id = ? AND kind = 'retail' AND active = 1"
       ).get(line.productId) as { id: string; name: string; price: number } | undefined;
       if (!p) return reply.code(400).send({ error: "Unknown product" });
+      /* the desk sells off this branch's shelf. The online shop's warehouse
+         is a different table entirely and cannot be reached from here. */
       const stock = await db.prepare(
         "SELECT qty FROM stock_levels WHERE product_id = ? AND branch_id = ?"
       ).get(line.productId, b.branch_id) as { qty: number } | undefined;

@@ -66,7 +66,8 @@ export default function AppointmentPanel({
   const [productLines, setProductLines] = useState<ProductLine[]>([]);
   const [productSearch, setProductSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const { payments } = useConfig();
+  const cfg = useConfig();
+  const { payments } = cfg;
 
   useEffect(() => {
     fetch("/api/store/products")
@@ -480,7 +481,17 @@ export default function AppointmentPanel({
               <p className="text-[11px] font-bold tracking-wider text-charcoal/45 uppercase">Tax invoice</p>
               <p className="mt-1 text-sm font-bold text-ink">{invoice?.invoiceNo}</p>
               {typeof invoice?.vat === "number" && (
-                <p className="mt-0.5 text-xs text-charcoal/55">includes {CURRENCY} {invoice.vat.toFixed(2)} VAT (5%)</p>
+                <p className="mt-0.5 text-xs text-charcoal/55">
+                  includes {CURRENCY} {invoice.vat.toFixed(2)} VAT ({(cfg.business.vatRate * 100).toFixed(0)}%)
+                </p>
+              )}
+              {/* the TRN belongs on anything that calls itself a tax invoice —
+                  a client asking for one at the desk will look for it here */}
+              {cfg.business.trn && (
+                <p className="mt-1.5 border-t border-black/8 pt-1.5 text-[11px] text-charcoal/50">
+                  {cfg.business.legalName}<br />
+                  <span className="font-semibold text-charcoal/70">TRN {cfg.business.trn}</span>
+                </p>
               )}
               <p className="mt-1 text-xs text-charcoal/50">
                 Generated automatically and sent to {appt.client.split(" ")[0]} by SMS.

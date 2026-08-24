@@ -1,7 +1,25 @@
-/* Branded, downloadable tax-invoice PDF (A5 receipt style). */
+/* ------------------------------------------------------------------ */
+/* Branded, downloadable tax invoice (A5 receipt style).               */
+/*                                                                     */
+/* This is a legal document, not a receipt with nice type on it. A UAE */
+/* tax invoice is only valid if it carries, at minimum:                */
+/*                                                                     */
+/*   · the words "Tax Invoice"                                         */
+/*   · the supplier's legal name, address and TRN                      */
+/*   · a sequential invoice number and the date of issue               */
+/*   · a description of what was supplied                              */
+/*   · the tax rate, the tax amount, and the total — all in AED        */
+/*                                                                     */
+/* The TRN is the one that gets forgotten and the one that matters     */
+/* most: without it the client cannot reclaim input VAT and the salon  */
+/* is not compliant. It is printed prominently, twice — in the header  */
+/* block and again in the footer — because a folded or cropped receipt */
+/* should still show it.                                               */
+/* ------------------------------------------------------------------ */
 
 import PDFDocument from "pdfkit";
 import { db } from "./db.js";
+import { config } from "./config.js";
 import type { invoiceToApi } from "./invoices.js";
 
 type ApiInvoice = ReturnType<typeof invoiceToApi>;
@@ -23,15 +41,22 @@ export async function renderInvoicePdf(inv: ApiInvoice):Promise<Promise<Buffer>>
 
   const W = doc.page.width - 88; // content width
 
-  /* header */
+  const biz = config.business;
+
+  /* header — the supplier, as the FTA needs them identified */
   doc.fillColor(INK).font("Times-Bold").fontSize(26).text("DASTAAN", { characterSpacing: 6 });
   doc.moveDown(0.1);
   doc.rect(44, doc.y + 2, 90, 2).fill(GOLD);
   doc.moveDown(0.6);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5).text(biz.legalName);
   doc.fillColor(GRAY).font("Helvetica").fontSize(8.5)
     .text(branch.name)
     .text(`${branch.address} · ${branch.area}`)
     .text(branch.phone);
+  /* the number that makes this a tax invoice rather than a receipt */
+  doc.moveDown(0.25);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(9)
+    .text(`TRN ${biz.trn}`, { characterSpacing: 0.4 });
 
   /* invoice meta */
   doc.moveDown(1.2);
@@ -80,19 +105,25 @@ export async function renderInvoicePdf(inv: ApiInvoice):Promise<Promise<Buffer>>
   };
   if (inv.discount > 0) row("Discount", `-${inv.discount.toFixed(2)}`);
   row("Subtotal (excl. VAT)", (inv.gross - inv.vat).toFixed(2));
-  row("VAT 5%", inv.vat.toFixed(2));
+  row(`VAT ${(biz.vatRate * 100).toFixed(0)}% (AED)`, inv.vat.toFixed(2));
   if (inv.tip > 0) row("Tip", inv.tip.toFixed(2));
   y += 4;
   doc.moveTo(44 + W - 200, y - 2).lineTo(44 + W, y - 2).strokeColor(GOLD).lineWidth(1).stroke();
   y += 4;
   row("TOTAL PAID", `AED ${inv.total.toFixed(2)}`, { bold: true, gold: false });
 
-  /* footer */
-  doc.fontSize(8).fillColor(GRAY).font("Helvetica")
-    .text("Prices are inclusive of 5% UAE VAT. Generated automatically by the Dastaan platform.",
-      44, doc.page.height - 84, { width: W, align: "center" })
+  /* footer — the TRN again, in case the top of the receipt is lost */
+  doc.fontSize(7.5).fillColor(GRAY).font("Helvetica")
+    .text(
+      `${biz.legalName} · TRN ${biz.trn} · ${biz.registeredAddress}`,
+      44, doc.page.height - 92, { width: W, align: "center" }
+    )
+    .text(
+      `Prices are inclusive of ${(biz.vatRate * 100).toFixed(0)}% UAE VAT. All amounts in AED.`,
+      44, doc.page.height - 82, { width: W, align: "center" }
+    )
     .fillColor(GOLD).font("Times-Italic").fontSize(9)
-    .text("Every cut tells a story.", 44, doc.page.height - 68, { width: W, align: "center" });
+    .text("Every cut tells a story.", 44, doc.page.height - 66, { width: W, align: "center" });
 
   doc.end();
   return done;

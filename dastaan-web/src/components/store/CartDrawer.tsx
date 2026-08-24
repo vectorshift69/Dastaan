@@ -18,6 +18,9 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
   const [placed, setPlaced] = useState<Placed | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
+  /* Everything is delivered — there is no collect-from-branch — so an
+     address is the one thing we always have to ask for. */
+  const [address, setAddress] = useState("");
 
   const total = Math.max(0, cart.subtotal - (coupon?.discount ?? 0));
 
@@ -49,6 +52,7 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           items: cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
           couponCode: coupon?.code,
+          address: address.trim(),
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -89,8 +93,8 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
             </p>
             <p className="mt-6 text-xs leading-relaxed text-ivory/40">
               {payments.online
-                ? "Payment received. We'll let you know when it's ready."
-                : "We'll confirm and let you know when it's ready — pay when you collect."}
+                ? "Payment received. We'll email you when it ships."
+                : "We'll confirm your order and let you know when it ships. Pay on delivery."}
             </p>
             <Link href="/orders" className="btn-gold mt-8 rounded-full px-8 py-3 text-sm tracking-widest uppercase">
               View my orders
@@ -141,6 +145,19 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
                 Clear cart
               </button>
 
+              {/* delivery */}
+              <div className="mt-6">
+                <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/45 uppercase">Delivery address</span>
+                <textarea
+                  value={address}
+                  onChange={(e) => { setAddress(e.target.value); setError(null); }}
+                  rows={3}
+                  placeholder="Building, apartment, area, emirate"
+                  className="mt-2 w-full resize-none rounded-2xl border border-ivory/15 bg-ink px-4 py-3 text-sm text-ivory outline-none placeholder:text-ivory/25 focus:border-gold"
+                />
+                <p className="mt-1.5 text-[11px] text-ivory/30">We deliver anywhere in the UAE.</p>
+              </div>
+
               {/* coupon */}
               <div className="mt-6">
                 <span className="text-[11px] font-semibold tracking-[0.2em] text-ivory/45 uppercase">Discount code</span>
@@ -185,7 +202,8 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               ) : (
                 <button
                   onClick={placeOrder}
-                  disabled={placing}
+                  disabled={placing || address.trim().length < 10}
+                  title={address.trim().length < 10 ? "Add a delivery address first" : undefined}
                   className="btn-gold mt-4 w-full rounded-full py-3.5 text-sm tracking-widest uppercase disabled:opacity-50"
                 >
                   {placing ? "Placing…" : payments.online ? "Pay now" : "Place order"}
@@ -193,7 +211,7 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               )}
               {error && <p className="mt-3 text-xs text-[#e08a80]">{error}</p>}
               <p className="mt-3 text-center text-[10px] tracking-wider text-ivory/30">
-                Prices include 5% VAT · {payments.online ? "secure card payment" : "payment taken in branch"}
+                Prices include 5% VAT · {payments.online ? "secure card payment" : "pay on delivery"}
               </p>
             </footer>
           </>

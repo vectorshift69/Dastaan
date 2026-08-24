@@ -1,0 +1,15 @@
+// Production build: emit plain JS to dist/ so the deployed service runs on
+// node directly. `tsx` is a dev dependency, and hosts that set
+// NODE_ENV=production (Render does) skip devDependencies on install — so the
+// server must not need a TypeScript loader at runtime.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true,
+    "declaration": false
+  },
+  "include": ["src"]
+}

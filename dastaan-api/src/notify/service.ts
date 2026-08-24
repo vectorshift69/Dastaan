@@ -7,7 +7,7 @@
 /* ------------------------------------------------------------------ */
 
 import { db, uid, now } from "../db.js";
-import { makeProvider } from "./provider.js";
+import { makeProvider, makeEmailProvider } from "./provider.js";
 
 const REMINDER_HOURS = 2; // PRD: at least 2 hours before the appointment
 const MAX_ATTEMPTS = 5;
@@ -18,6 +18,7 @@ const GOOGLE_REVIEW_URL =
   process.env.GOOGLE_REVIEW_URL || "https://g.page/r/dastaan/review";
 
 const provider = makeProvider();
+const emailProvider = makeEmailProvider();
 
 type BookingInfo = {
   id: string;
@@ -49,9 +50,26 @@ async function enqueue(
   scheduledAt: string
 ) {
   await db.prepare(
-    `INSERT INTO notifications (id, booking_id, to_phone, kind, body, scheduled_at, created_at)
-     VALUES (?,?,?,?,?,?,?)`
+    `INSERT INTO notifications (id, booking_id, channel, to_phone, kind, body, scheduled_at, created_at)
+     VALUES (?,?,'sms',?,?,?,?,?)`
   ).run(uid(), bookingId, toPhone, kind, body, scheduledAt, now());
+}
+
+/**
+ * Queue an email. Same outbox, same retries — nothing user-facing waits on
+ * a mail API, and a crash between "we said we sent it" and actually sending
+ * cannot lose the message.
+ */
+export async function enqueueEmail(
+  toEmail: string,
+  kind: "password_reset",
+  subject: string,
+  body: string
+) {
+  await db.prepare(
+    `INSERT INTO notifications (id, booking_id, channel, to_email, subject, kind, body, scheduled_at, created_at)
+     VALUES (?,NULL,'email',?,?,?,?,?,?)`
+  ).run(uid(), toEmail, subject, kind, body, now(), now());
 }
 
 async function getBooking(bookingId: string): Promise<BookingInfo | undefined> {
@@ -140,13 +158,24 @@ export async function onInvoiceIssued(
 export async function drainDue():Promise<Promise<number>> {
   const due = await db
     .prepare(
-      "SELECT id, to_phone, body, attempts FROM notifications WHERE status = 'pending' AND scheduled_at <= ? ORDER BY scheduled_at LIMIT 20"
+      "SELECT id, channel, to_phone, to_email, subject, body, attempts FROM notifications WHERE status = 'pending' AND scheduled_at <= ? ORDER BY scheduled_at LIMIT 20"
     )
-    .all(new Date().toISOString()) as { id: string; to_phone: string; body: string; attempts: number }[];
+    .all(new Date().toISOString()) as {
+      id: string; channel: string; to_phone: string | null; to_email: string | null;
+      subject: string | null; body: string; attempts: number;
+    }[];
 
   for (const n of due) {
     try {
-      await provider.send(n.to_phone, n.body);
+      /* one queue, two ways out — the retry and backoff below are the same
+         either way, which is the point of keeping them in one table */
+      if (n.channel === "email") {
+        if (!n.to_email) throw new Error("email notification with no address");
+        await emailProvider.send(n.to_email, n.subject ?? "Dastaan", n.body);
+      } else {
+        if (!n.to_phone) throw new Error("sms notification with no number");
+        await provider.send(n.to_phone, n.body);
+      }
       await db.prepare("UPDATE notifications SET status = 'sent', sent_at = ?, attempts = ? WHERE id = ?")
         .run(now(), n.attempts + 1, n.id);
     } catch (err) {

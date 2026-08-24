@@ -35,11 +35,13 @@ const adjustSchema = z.object({
   note: z.string().max(200).optional(),
 });
 
+type Reason = "received" | "adjustment" | "pos_sale" | "online_sale" | "correction";
+
 export async function moveStock(
   productId: string,
   branchId: string,
   delta: number,
-  reason: "received" | "adjustment" | "pos_sale" | "online_sale" | "correction",
+  reason: Reason,
   actorId: string | null,
   note?: string
 ) {
@@ -119,7 +121,10 @@ export default async function inventoryRoutes(app: FastifyInstance) {
 
   /* ---------------- stock ---------------- */
 
-  // levels: admin → own branch; super → any (?branchId=) or all
+  /* Branch stock — the retail shelf and the back bar at a location. The
+     online shop's stock is not here and never has been: it is a separate
+     warehouse with its own table, its own screen and its own login.
+     admin → own branch; super → any (?branchId=) or all. */
   app.get("/inventory", async (req, reply) => {
     const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
@@ -127,7 +132,8 @@ export default async function inventoryRoutes(app: FastifyInstance) {
     const branchId = s.role === "admin" ? s.branchId : (q.branchId ?? null);
     const base = `
       SELECT p.id AS "productId", p.name, p.sku, p.category, p.kind, p.price,
-             l.branch_id AS "branchId", l.qty, l.reorder_at AS "reorderAt",
+             l.branch_id AS "branchId", l.qty,
+             l.reorder_at AS "reorderAt",
              (l.qty <= l.reorder_at) AS low
       FROM stock_levels l JOIN products p ON p.id = l.product_id
       WHERE p.active = 1`;

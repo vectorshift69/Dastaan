@@ -7,6 +7,7 @@ import AppointmentPanel from "@/components/console/AppointmentPanel";
 import LoyaltyScan from "@/components/console/LoyaltyScan";
 import ReportsView from "@/components/console/ReportsView";
 import InventoryView from "@/components/console/InventoryView";
+import TeamView from "@/components/console/TeamView";
 import CouponsView from "@/components/console/CouponsView";
 import OrdersView from "@/components/console/OrdersView";
 import ClientsView from "@/components/console/ClientsView";
@@ -35,7 +36,7 @@ const fromApi = (b: ApiBooking): Appointment => ({
   loyalty: b.loyalty,
 });
 
-type View = "calendar" | "clients" | "inventory" | "reports" | "coupons" | "orders";
+type View = "calendar" | "clients" | "inventory" | "reports" | "coupons" | "orders" | "team";
 
 /* Nav mirrors the API's permission matrix — the server enforces it too. */
 const NAV: { icon: string; label: string; view: View; roles: string[] }[] = [
@@ -45,15 +46,17 @@ const NAV: { icon: string; label: string; view: View; roles: string[] }[] = [
   { icon: "◈", label: "Reports", view: "reports", roles: ["super_admin"] },
   { icon: "✦", label: "Coupons", view: "coupons", roles: ["super_admin"] },
   { icon: "⬡", label: "Orders", view: "orders", roles: ["super_admin"] },
+  { icon: "◉", label: "Team", view: "team", roles: ["super_admin"] },
 ];
 
 const TITLES: Record<View, string> = {
   calendar: "Calendar",
   clients: "Clients",
-  inventory: "Inventory",
+  inventory: "Branch stock",
   reports: "Sales reports",
   coupons: "Discount codes",
   orders: "Online orders",
+  team: "Team & access",
 };
 
 export default function Console() {
@@ -61,7 +64,7 @@ export default function Console() {
   const [appointments, setAppointments] = useState<Appointment[]>(dayAppointments);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [live, setLive] = useState(false); // true once real API data loads
-  const [me, setMe] = useState<{ name: string; role: string } | null>(null);
+  const [me, setMe] = useState<{ id?: string; name: string; role: string } | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [view, setView] = useState<View>("calendar");
   /* the day being looked at — the console used to be hardwired to today */
@@ -289,6 +292,7 @@ export default function Console() {
         {view === "inventory" && <InventoryView role={me?.role ?? "admin"} />}
         {view === "coupons" && <CouponsView />}
         {view === "orders" && <OrdersView />}
+        {view === "team" && <TeamView meId={me?.id} />}
 
         {/* calendar + panel */}
         {view === "calendar" && mode === "month" && (

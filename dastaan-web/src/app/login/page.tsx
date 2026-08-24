@@ -240,7 +240,7 @@ function ClientLogin() {
           )}
 
           <div className="mt-7 flex items-center justify-between text-[13px]">
-            <Link href="#" className="text-ivory/45 transition-colors hover:text-gold-2">
+            <Link href="/forgot" className="text-ivory/45 transition-colors hover:text-gold-2">
               Forgot password?
             </Link>
             <button

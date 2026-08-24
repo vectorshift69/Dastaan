@@ -5,8 +5,10 @@
 /* ------------------------------------------------------------------ */
 
 import { db, uid, now, nextCounter } from "./db.js";
+import { config } from "./config.js";
 
-const VAT_RATE = 0.05;
+/* one rate, from config — a rate change must not mean hunting through files */
+const VAT_RATE = config.business.vatRate;
 
 export type InvoiceInput = {
   price: number;      // service total before discount (editable at POS per PRD 11)
@@ -35,6 +37,10 @@ export type Invoice = {
   paymentMethod: string;
   couponCode: string | null;
   createdAt: string;
+  /* The supplier, as a UAE tax invoice has to identify them. Part of the
+     type rather than something screens look up, so a new screen showing a
+     bill cannot forget the TRN. */
+  business: { legalName: string; trn: string; vatRate: number };
 };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -91,6 +97,13 @@ export async function createInvoiceForBooking(bookingId: string, input: InvoiceI
     id, invoiceNo, bookingId: b.id, clientName: b.client_name, items,
     gross, discount: totalDiscount, tip: r2(input.tip), vat, total,
     paymentMethod: input.method, couponCode: input.couponCode ?? null, createdAt: now(),
+    /* same block as invoiceToApi — the desk shows this straight after
+       checkout, and that screen calls itself a tax invoice too */
+    business: {
+      legalName: config.business.legalName,
+      trn: config.business.trn,
+      vatRate: config.business.vatRate,
+    },
   };
 }
 
@@ -116,4 +129,12 @@ export const invoiceToApi = (r: InvoiceRow) => ({
   paymentMethod: r.payment_method,
   couponCode: r.coupon_code,
   createdAt: r.created_at,
+  /* Whoever renders this — the console, the client's account, a PDF — is
+     showing a tax invoice, and a tax invoice without the supplier's TRN is
+     not a valid one. Sent with the invoice so no screen has to remember. */
+  business: {
+    legalName: config.business.legalName,
+    trn: config.business.trn,
+    vatRate: config.business.vatRate,
+  },
 });

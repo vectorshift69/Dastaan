@@ -7,7 +7,12 @@ import CartDrawer from "@/components/store/CartDrawer";
 import { useCart } from "@/lib/cart";
 import { CURRENCY } from "@/lib/data";
 
-type Product = { id: string; name: string; category: string; price: number };
+type Product = {
+  id: string; name: string; category: string; price: number;
+  /* what the warehouse can actually ship — the storefront must respect it,
+     otherwise a client fills a cart and only finds out at checkout */
+  available: number;
+};
 
 /* Deterministic bottle art per product — no image assets needed */
 const TONES = ["#3a2f10", "#2f3a35", "#3a2a2a", "#2a2f3a", "#332a3a", "#3a352a"];
@@ -88,21 +93,38 @@ export default function StorePage() {
         ) : shown.length === 0 ? (
           <div className="mt-16 rounded-2xl border border-ivory/10 bg-coal p-10 text-center">
             <p className="text-sm text-ivory/55">
-              No products on the shelf yet. The owner can add them from the console&apos;s Inventory tab.
+              Nothing in the shop just yet — come back soon.
             </p>
           </div>
         ) : (
           <div className="mt-10 grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4">
             {shown.map((p) => {
               const inCart = cart.lines.find((l) => l.productId === p.id);
+              const soldOut = p.available <= 0;
+              /* the last few, worth saying out loud — it is the honest nudge,
+                 and it stops a client asking for six when there are two */
+              const scarce = !soldOut && p.available <= 3;
+              const atLimit = !!inCart && inCart.qty >= p.available;
               return (
                 <article
                   key={p.id}
-                  className="group flex flex-col overflow-hidden rounded-2xl border border-ivory/10 bg-coal transition-all hover:border-gold/40"
+                  className={`group flex flex-col overflow-hidden rounded-2xl border bg-coal transition-all ${
+                    soldOut ? "border-ivory/8 opacity-55" : "border-ivory/10 hover:border-gold/40"
+                  }`}
                 >
                   {/* bottle */}
                   <div className="relative flex h-44 items-end justify-center overflow-hidden bg-gradient-to-b from-coal-2 to-ink">
                     <div className="absolute -top-10 h-32 w-32 rounded-full bg-gold/5 blur-2xl transition-all group-hover:bg-gold/10" />
+                    {soldOut && (
+                      <span className="absolute top-3 right-3 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-bold tracking-wider text-ivory/70 uppercase">
+                        Sold out
+                      </span>
+                    )}
+                    {scarce && (
+                      <span className="absolute top-3 right-3 rounded-full bg-gold/15 px-2.5 py-1 text-[10px] font-bold tracking-wider text-gold-2 uppercase">
+                        {p.available} left
+                      </span>
+                    )}
                     <div
                       className="relative mb-6 h-28 w-14 rounded-t-md rounded-b-lg ring-1 ring-gold/30 transition-transform duration-500 group-hover:-translate-y-1"
                       style={{ background: `linear-gradient(160deg, ${toneFor(p.id)} 0%, #101010 85%)` }}
@@ -118,12 +140,30 @@ export default function StorePage() {
                     <p className="mt-1 font-semibold text-gold">{CURRENCY} {p.price}</p>
 
                     <div className="mt-auto pt-4">
-                      {inCart ? (
-                        <div className="flex items-center justify-between rounded-full border border-gold/50 bg-gold/10 px-2 py-1.5">
-                          <QtyBtn onClick={() => cart.setQty(p.id, inCart.qty - 1)} label="Decrease">−</QtyBtn>
-                          <span className="text-sm font-bold text-gold-2">{inCart.qty} in cart</span>
-                          <QtyBtn onClick={() => cart.setQty(p.id, inCart.qty + 1)} label="Increase">+</QtyBtn>
-                        </div>
+                      {soldOut ? (
+                        <p className="rounded-full border border-ivory/10 py-2.5 text-center text-[13px] text-ivory/40">
+                          Back in stock soon
+                        </p>
+                      ) : inCart ? (
+                        <>
+                          <div className="flex items-center justify-between rounded-full border border-gold/50 bg-gold/10 px-2 py-1.5">
+                            <QtyBtn onClick={() => cart.setQty(p.id, inCart.qty - 1)} label="Decrease">−</QtyBtn>
+                            <span className="text-sm font-bold text-gold-2">{inCart.qty} in cart</span>
+                            {/* never let the cart exceed what can be shipped */}
+                            <QtyBtn
+                              onClick={() => !atLimit && cart.setQty(p.id, inCart.qty + 1)}
+                              label="Increase"
+                              disabled={atLimit}
+                            >
+                              +
+                            </QtyBtn>
+                          </div>
+                          {atLimit && (
+                            <p className="mt-2 text-center text-[11px] text-ivory/35">
+                              That&rsquo;s all we have right now
+                            </p>
+                          )}
+                        </>
                       ) : (
                         <button
                           onClick={() => addToCart(p)}
@@ -151,12 +191,15 @@ export default function StorePage() {
   );
 }
 
-function QtyBtn({ children, onClick, label }: { children: React.ReactNode; onClick: () => void; label: string }) {
+function QtyBtn({ children, onClick, label, disabled }: {
+  children: React.ReactNode; onClick: () => void; label: string; disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
       aria-label={label}
-      className="flex h-7 w-7 items-center justify-center rounded-full text-lg text-gold-2 transition-colors hover:bg-gold hover:text-ink"
+      disabled={disabled}
+      className="flex h-7 w-7 items-center justify-center rounded-full text-lg text-gold-2 transition-colors hover:bg-gold hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gold-2"
     >
       {children}
     </button>

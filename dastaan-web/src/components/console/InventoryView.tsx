@@ -52,6 +52,12 @@ export default function InventoryView({ role }: { role: string }) {
         )}
       </div>
 
+      <p className="mt-3 max-w-2xl rounded-xl bg-paper/70 px-4 py-2.5 text-[13px] leading-relaxed text-charcoal/60">
+        This branch&rsquo;s own stock — the retail shelf and the back bar. The online shop
+        keeps its own stock in its own system, so nothing here can be sold out from under
+        the chair by a website order.
+      </p>
+
       {msg && <p className="mt-3 rounded-lg bg-st-started/10 px-4 py-2 text-sm text-st-started">{msg}</p>}
 
       {showNew && isSuper && <NewProduct onDone={() => { setShowNew(false); setMsg("Product added"); load(); }} />}

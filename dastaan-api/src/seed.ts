@@ -228,6 +228,8 @@ const run = async () => {
     staff.map(([id, name, title, branch, code, role]) => [id, role, name, title, branch, hmacCode(code), now()]));
   await bulkInsert("products", ["id", "name", "sku", "category", "kind", "price", "created_at"],
     products.map(([id, name, sku, category, kind, price]) => [id, name, sku, category, kind, price, now()]));
+  /* Branch stock: what was counted on the shelf at each location. The online
+     shop's warehouse is seeded separately below — different stock entirely. */
   await bulkInsert("stock_levels", ["product_id", "branch_id", "qty", "reorder_at"],
     openingStock.map((x) => [...x]));
   await bulkInsert("stock_movements",
@@ -257,15 +259,27 @@ const run = async () => {
   for (const [userId, name, phone] of clients) {
     const id = uid();
     clientIds.set(userId, id);
-    clientRows.push([id, "client", userId, name, phone, pwd, at(dayOffset(-HISTORY_DAYS - int(10, 240)), "12:00")]);
+    /* Every demo client has an email, because without one they cannot be
+       sent a password reset — and "reset a client's password" is the first
+       thing an owner tries. .test is reserved by the IETF for exactly this,
+       so none of these can ever reach a real inbox by accident. */
+    clientRows.push([id, "client", userId, name, `${userId}@dastaan.test`, phone, pwd,
+      at(dayOffset(-HISTORY_DAYS - int(10, 240)), "12:00")]);
     const accId = uid();
     accountIds.set(id, accId);
     accountRows.push([accId, id,
       userId === "demo" ? "demotoken00000000000000000000000" : randomBytes(16).toString("hex"),
       0, 0, at(dayOffset(-HISTORY_DAYS), "12:00")]);
   }
-  await bulkInsert("users", ["id", "role", "user_id", "name", "phone", "password_hash", "created_at"], clientRows);
+  await bulkInsert("users", ["id", "role", "user_id", "name", "email", "phone", "password_hash", "created_at"], clientRows);
   await bulkInsert("loyalty_accounts", ["id", "client_id", "qr_token", "points", "lifetime_points", "created_at"], accountRows);
+
+  /* Whoever runs the online shop. Not salon staff: no branch, no chair, no
+     keypad code — an id and a password, and a warehouse to look after. */
+  await db.prepare(
+    "INSERT INTO users (id, role, user_id, name, title, password_hash, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).run("shop1", "shop_manager", "shop", "Sana Iqbal", "Online shop manager",
+    await hashPassword("shop1234"), at(dayOffset(-HISTORY_DAYS), "09:00"));
 
   /* Balances carried over from Fresha, so the loyalty screen shows a
      spread of tiers on day one rather than nine identical zeroes.       */
@@ -504,6 +518,22 @@ const run = async () => {
   await db.prepare("UPDATE stock_levels SET qty = 3 WHERE product_id = 'p4' AND branch_id = 'b1'").run();
   await db.prepare("UPDATE stock_levels SET qty = 2 WHERE product_id = 'p8' AND branch_id = 'b2'").run();
 
+  /* ---------- the online shop's warehouse ----------
+     Its own stock, bought in its own right — not carved out of any branch.
+     Deeper than a shelf because it serves the whole country from one place,
+     and one line (p8) is left low so the reorder warning has something to
+     show on the shop manager's screen. */
+  const onlineOpening: [string, number, number][] = [
+    ["p1", 46, 12], ["p2", 60, 15], ["p3", 38, 10],
+    ["p4", 28, 8], ["p5", 14, 4], ["p6", 7, 10],
+  ];
+  await bulkInsert("online_stock", ["product_id", "qty", "reserved", "reorder_at", "updated_at"],
+    onlineOpening.map(([pid, qty, reorder]) => [pid, qty, 0, reorder, at(dayOffset(-HISTORY_DAYS), "09:30")]));
+  await bulkInsert("online_stock_movements",
+    ["id", "product_id", "delta", "reason", "note", "actor_id", "created_at"],
+    onlineOpening.map(([pid, qty]) =>
+      [uid(), pid, qty, "received", "Opening warehouse count", "shop1", at(dayOffset(-HISTORY_DAYS), "09:30")]));
+
   await db.prepare("UPDATE coupons SET uses = ? WHERE id = ?").run(couponUses.welcome, couponIds.welcome);
   await db.prepare("UPDATE coupons SET uses = ? WHERE id = ?").run(couponUses.ramadan, couponIds.ramadan);
 
@@ -579,17 +609,21 @@ const run = async () => {
 
   /* ---------- store orders, one in each state ---------- */
 
+  /* Every online order is delivered, so each one carries an address and
+     nothing else — no branch, no collection slot. Stock comes off the
+     warehouse, never a shelf. */
   const orderSpecs: [string, string, [string, number][], string, number, string | null][] = [
-    ["omar.f", "b1", [["p1", 1], ["p3", 1]], "fulfilled", -12, null],
-    ["demo", "b1", [["p2", 2]], "fulfilled", -8, "WELCOME10"],
-    ["hamza.s", "b2", [["p5", 1]], "paid", -3, null],
-    ["zaid.m", "b1", [["p4", 1], ["p6", 1]], "placed", -1, null],
-    ["faizan.q", "b2", [["p2", 1]], "cancelled", -5, null],
+    ["omar.f", "Marina Gate 2, Apt 1104, Dubai Marina", [["p1", 1], ["p3", 1]], "fulfilled", -12, null],
+    ["demo", "Villa 22, Al Barsha South 2, Dubai", [["p2", 2]], "fulfilled", -8, "WELCOME10"],
+    ["hamza.s", "Burj Views C, Apt 906, Downtown Dubai", [["p5", 1]], "paid", -3, null],
+    ["zaid.m", "Al Nahda Tower, Apt 502, Sharjah", [["p4", 1], ["p6", 1]], "placed", -1, null],
+    ["faizan.q", "Reem Island, Sky Tower 1808, Abu Dhabi", [["p2", 1]], "cancelled", -5, null],
   ];
   const orderRows: unknown[][] = [];
   const orderMovementRows: unknown[][] = [];
+  const onlineHolds = new Map<string, number>();
   let orderSeq = 0;
-  for (const [userId, branchId, lines, status, back, coupon] of orderSpecs) {
+  for (const [userId, address, lines, status, back, coupon] of orderSpecs) {
     const items = lines.map(([pid, qty]) => ({
       productId: pid, name: productName.get(pid)!, qty, price: productPrice.get(pid)!,
     }));
@@ -600,18 +634,28 @@ const run = async () => {
     const placedAt = at(dayOffset(back), "20:10");
     orderRows.push([uid(), `ORD-${year}-${String(++orderSeq).padStart(5, "0")}`,
       clientIds.get(userId)!, JSON.stringify(items), subtotal, discount, coupon, vat, total,
-      status, branchId, placedAt, placedAt]);
+      status, address, placedAt, placedAt]);
 
+    /* shipped: stock has really left the warehouse and the ledger says so */
     if (status === "fulfilled")
       for (const [pid, qty] of lines)
-        orderMovementRows.push([uid(), pid, branchId, -qty, "online_sale", "Store order fulfilled", "st1", placedAt]);
+        orderMovementRows.push([uid(), pid, -qty, "online_sale", "Order shipped", "shop1", placedAt]);
+    /* paid or placed but not yet shipped: the stock is still there, but held */
+    if (status === "paid" || status === "placed")
+      for (const [pid, qty] of lines) onlineHolds.set(pid, (onlineHolds.get(pid) ?? 0) + qty);
   }
 
   await bulkInsert("orders",
     ["id", "order_no", "client_id", "items", "subtotal", "discount", "coupon_code", "vat", "total",
-     "status", "fulfil_branch_id", "created_at", "updated_at"], orderRows);
-  await bulkInsert("stock_movements",
-    ["id", "product_id", "branch_id", "delta", "reason", "note", "actor_id", "created_at"], orderMovementRows);
+     "status", "address", "created_at", "updated_at"], orderRows);
+  await bulkInsert("online_stock_movements",
+    ["id", "product_id", "delta", "reason", "note", "actor_id", "created_at"], orderMovementRows);
+
+  /* the shipped ones actually leave, and the unshipped ones stay held */
+  for (const row of orderMovementRows)
+    await db.prepare("UPDATE online_stock SET qty = qty + ? WHERE product_id = ?").run(row[2], row[1]);
+  for (const [pid, qty] of onlineHolds)
+    await db.prepare("UPDATE online_stock SET reserved = reserved + ? WHERE product_id = ?").run(qty, pid);
   await db.prepare(
     `INSERT INTO counters (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -630,6 +674,7 @@ const run = async () => {
     `  · ${reviewCount} ratings · ${clients.length} registered clients · 14 archived timeline days\n` +
     `  Owner 9999 · Reception 1111 (Marina) / 1212 (City Centre) · Barbers 2222 3333 4444 5555 6666 7777 6161 6262 6363\n` +
     `  Client login: demo / demo1234 (all demo clients share that password)\n` +
+    `  Online shop login: shop / shop1234 (its own door at /shop — not the team keypad)\n` +
     `  Coupons: WELCOME10 (10%) · GROOM25 (AED 25 off services) · SUMMER15 (expired, for the disabled state)`
   );
 };

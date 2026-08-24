@@ -1,0 +1,49 @@
+# Render blueprint for the payments service.
+#
+# Deliberately a SEPARATE service from dastaan-api: the salon's Stripe
+# credentials live here and nowhere else, so a mistake in the booking code
+# cannot reach them. It shares the Supabase database — one salon, one set of
+# books — but owns the payments and webhook_events tables.
+services:
+  - type: web
+    name: dastaan-payments
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: dastaan-payments
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: CURRENCY
+        value: aed
+      # same database as the API
+      - key: DATABASE_URL
+        sync: false
+      # THE SALON'S Stripe account — money settles to them, not to us.
+      # Start with the test key (sk_test_…) and only swap to live at go-live.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # from Stripe -> Developers -> Webhooks, after adding the endpoint
+      # https://dastaan-payments.onrender.com/webhook
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # must match PAYMENT_SERVICE_TOKEN on dastaan-api
+      - key: PAYMENT_SERVICE_TOKEN
+        sync: false
+      # --- how a booking may be paid: the salon's commercial choice ---
+      # Pay the whole thing at booking, or nothing now and settle after the
+      # visit. Set PAY_LATER_ENABLED=0 to insist on prepayment.
+      - key: PAY_NOW_ENABLED
+        value: "1"
+      - key: PAY_LATER_ENABLED
+        value: "1"
+      # a prepaid appointment cancelled this far ahead is refunded in full
+      - key: REFUND_HOURS
+        value: "24"

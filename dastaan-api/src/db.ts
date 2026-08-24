@@ -195,9 +195,10 @@ export async function bulkInsert(
 /* Every table the app owns, child-first — used by the seed's --reset. */
 export const APP_TABLES = [
   "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
-  "coupon_redemptions", "coupons", "stock_movements", "stock_levels", "products",
+  "coupon_redemptions", "coupons", "online_stock_movements", "online_stock",
+  "stock_movements", "stock_levels", "products",
   "invoices", "notifications", "booking_events", "bookings", "login_attempts",
-  "audit_log", "counters", "users", "services", "branches",
+  "audit_log", "counters", "password_resets", "users", "services", "branches",
 ] as const;
 
 /* ------------------------------------------------------------------ */
@@ -294,6 +295,8 @@ export async function migrate() {
     created_at TEXT NOT NULL
   );
 
+  /* Branch stock: the retail shelf and the back bar at each location. The
+     online shop's stock is a different table entirely — see online_stock. */
   CREATE TABLE IF NOT EXISTS stock_levels (
     product_id TEXT NOT NULL REFERENCES products(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
@@ -307,7 +310,7 @@ export async function migrate() {
     product_id TEXT NOT NULL REFERENCES products(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     delta INTEGER NOT NULL,
-    reason TEXT NOT NULL CHECK (reason IN ('received','adjustment','pos_sale','online_sale','correction')),
+    reason TEXT NOT NULL,
     note TEXT,
     actor_id TEXT REFERENCES users(id),
     created_at TEXT NOT NULL
@@ -453,6 +456,117 @@ export async function migrate() {
      each one safe to run on every boot. */
   await db.exec(`
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_email TEXT;
+
+    /* ---- store fulfilment ----
+       Every online order is delivered. There is no collect-from-branch:
+       the branches keep their own stock for the chair and the walk-in
+       shelf, and the website is a separate operation that ships. */
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS address TEXT;
+    ALTER TABLE orders DROP COLUMN IF EXISTS fulfilment;
+    ALTER TABLE orders DROP COLUMN IF EXISTS collect_booking_id;
+    ALTER TABLE orders DROP COLUMN IF EXISTS collect_at;
+
+    /* ---- stock reservations ----
+       Without this the shop will happily sell ten of something there are
+       three of: stock only moved when an order was marked fulfilled, which
+       can be days later. An order now RESERVES stock the moment it is
+       placed. Available to sell = qty - reserved. Cancelling releases the
+       reservation; fulfilling converts it into a real movement.
+
+       This applies to the online warehouse below. Branch stock has no
+       reservations — a sale at the desk is instant. */
+    ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS reserved INTEGER NOT NULL DEFAULT 0;
+
+    ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_reason_check;
+    ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_reason_ck;
+    ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_reason_ck
+      CHECK (reason IN ('received','adjustment','pos_sale','online_sale','correction'));
+
+    /* An earlier design split branch stock into a shelf pool and an online
+       pool. The online shop is now a separate operation with its own stock,
+       so that split is gone: fold anything it left behind back into the
+       branch row. Safe on a database that never had it — the sums are of
+       single rows and the delete matches nothing. Can be removed once every
+       environment has booted once. */
+    UPDATE stock_levels a SET qty = t.qty, reserved = t.reserved
+      FROM (SELECT product_id, branch_id, SUM(qty) AS qty, SUM(reserved) AS reserved
+              FROM stock_levels GROUP BY product_id, branch_id) t
+     WHERE a.product_id = t.product_id AND a.branch_id = t.branch_id;
+    DELETE FROM stock_levels a USING stock_levels b
+     WHERE a.product_id = b.product_id AND a.branch_id = b.branch_id AND a.ctid < b.ctid;
+    ALTER TABLE stock_levels DROP COLUMN IF EXISTS channel;
+    ALTER TABLE stock_movements DROP COLUMN IF EXISTS channel;
+    DROP INDEX IF EXISTS idx_stock_levels_key;
+    ALTER TABLE stock_levels DROP CONSTRAINT IF EXISTS stock_levels_pkey;
+    ALTER TABLE stock_levels ADD PRIMARY KEY (product_id, branch_id);
+
+    /* ---- the online shop's own stock ----
+       One warehouse for the whole of the UAE, with no branch against it:
+       everything sold on the website is delivered from it, so asking which
+       branch a jar belongs to has no meaning. It is deliberately a separate
+       table rather than a column on stock_levels — different stock, different
+       people, different login. A barber using the last bottle of oil at
+       Marina Walk cannot affect what the website is selling, and vice versa. */
+    CREATE TABLE IF NOT EXISTS online_stock (
+      product_id TEXT PRIMARY KEY REFERENCES products(id),
+      qty INTEGER NOT NULL DEFAULT 0,
+      reserved INTEGER NOT NULL DEFAULT 0,     -- held by orders not yet shipped
+      reorder_at INTEGER NOT NULL DEFAULT 5,
+      updated_at TEXT
+    );
+
+    /* Its own ledger too, for the same reason. */
+    CREATE TABLE IF NOT EXISTS online_stock_movements (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL REFERENCES products(id),
+      delta INTEGER NOT NULL,
+      reason TEXT NOT NULL
+        CHECK (reason IN ('received','adjustment','online_sale','correction','returned')),
+      note TEXT,
+      actor_id TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_online_movements ON online_stock_movements (created_at);
+
+    /* The online shop is run by someone who is not salon staff and does not
+       have a chair, so they get their own role and their own login rather
+       than a keypad code. */
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_ck;
+    ALTER TABLE users ADD CONSTRAINT users_role_ck
+      CHECK (role IN ('super_admin','admin','barber','client','shop_manager'));
+
+    /* ---- password resets ----
+       Only the HASH of the token is kept, exactly as with a password: if this
+       table ever leaks, the rows in it cannot be used to take over an account.
+       Single use and short-lived — used_at is set the moment it is spent, so
+       a link forwarded or sitting in a mailbox is worth nothing twice. */
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      requested_ip TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets (user_id);
+
+    /* ---- the outbox carries email too ----
+       It was built for SMS to a phone. A reset link has to go to an address,
+       so the row now names its channel and its destination. Everything that
+       existed was an SMS, hence the defaults. */
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'sms';
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS to_email TEXT;
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE notifications ALTER COLUMN to_phone DROP NOT NULL;
+    ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_kind_check;
+    ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_kind_ck;
+    ALTER TABLE notifications ADD CONSTRAINT notifications_kind_ck
+      CHECK (kind IN ('confirmation','reminder','feedback','cancellation','invoice','password_reset'));
+    ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_channel_ck;
+    ALTER TABLE notifications ADD CONSTRAINT notifications_channel_ck
+      CHECK (channel IN ('sms','email'));
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub);

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import { CURRENCY } from "@/lib/data";
+import { useConfig } from "@/lib/config";
 
 type Order = {
   id: string; orderNo: string;
@@ -17,11 +18,12 @@ type Order = {
 const STATUS_COPY: Record<Order["status"], { label: string; tone: string }> = {
   placed: { label: "Placed", tone: "border-st-booked/50 text-[#8fb4dd]" },
   paid: { label: "Paid", tone: "border-st-confirmed/50 text-[#7fd0c5]" },
-  fulfilled: { label: "Ready / collected", tone: "border-st-started/50 text-[#8fce92]" },
+  fulfilled: { label: "Shipped", tone: "border-st-started/50 text-[#8fce92]" },
   cancelled: { label: "Cancelled", tone: "border-st-cancel/50 text-[#e08a80]" },
 };
 
 export default function MyOrders() {
+  const { business } = useConfig();
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [signedOut, setSignedOut] = useState(false);
 
@@ -92,6 +94,14 @@ export default function MyOrders() {
                 </div>
                 <span className="font-display text-2xl text-gold-2">{CURRENCY} {o.total.toFixed(2)}</span>
               </div>
+
+              {/* Goods bought here are a taxable supply, so the order record has
+                  to carry the supplier's TRN like any other tax invoice. */}
+              {business.trn && (
+                <p className="mt-3 border-t border-ivory/8 pt-3 text-[11px] leading-relaxed text-ivory/30">
+                  {business.legalName} · TRN {business.trn}
+                </p>
+              )}
             </article>
           ))}
         </div>
