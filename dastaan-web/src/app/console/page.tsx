@@ -114,6 +114,13 @@ export default function Console() {
     if (me && !visibleNav.some((n) => n.view === view)) setView("calendar");
   }, [me, view, visibleNav]);
 
+  /* A role with no tabs at all has no business on this screen. Without this
+     the shop manager got an empty sidebar but a full calendar behind it —
+     barber columns, "+ New booking", the branch picker. The API refuses them
+     now, but the console should not be drawing the salon's day to someone who
+     does not work in the salon. */
+  const belongsHere = !me || visibleNav.length > 0;
+
   const branch = branches.find((b) => b.id === branchId)!;
   const branchBarbers = barbers.filter((b) => b.branchId === branchId);
   const selected = appointments.find((a) => a.id === selectedId) ?? null;
@@ -140,6 +147,22 @@ export default function Console() {
       }).catch(() => {});
     }
   };
+
+  if (!belongsHere)
+    return (
+      <div className="grid h-svh place-items-center bg-paper px-6 text-center text-ink">
+        <div className="max-w-sm">
+          <p className="text-[11px] font-bold tracking-[0.2em] text-charcoal/40 uppercase">
+            Wrong door
+          </p>
+          <h1 className="font-display mt-2 text-2xl">This is the salon console</h1>
+          <p className="mt-3 text-sm leading-relaxed text-charcoal/55">
+            You are signed in as {me?.name}. The online shop is managed at{" "}
+            <Link href="/shop" className="font-semibold text-gold-dim underline">/shop</Link>.
+          </p>
+        </div>
+      </div>
+    );
 
   return (
     <div className="flex h-svh overflow-hidden bg-paper text-ink">

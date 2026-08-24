@@ -55,6 +55,17 @@ network hops, distributed-transaction pain, and ops cost with no benefit.
   persisted in the DB so restarts don't reset it.
 - **Client login (user ID + password).** bcrypt cost 12; unknown-user
   timing is equalized with a dummy compare; same lockout scheme per IP+ID.
+- **Online shop login (`/auth/shop/login`).** A separate door from the staff
+  keypad. Whoever runs the shop is not on the salon floor: no branch, no chair,
+  and no code that also opens the till. Same bcrypt, same lockout, and the same
+  deliberately vague "wrong user ID or password" either way.
+- **Password resets.** Only the SHA-256 of the token is stored, so a leak of
+  `password_resets` is useless. Single use — the token is spent *before* the
+  password changes, so two racing requests cannot both win — and expires in an
+  hour (`RESET_TTL_MINUTES`). Requesting a new link spends the outstanding ones.
+- **No account enumeration.** `POST /auth/forgot` answers identically for a real
+  address, an address nobody has, and a malformed one. Anything else turns the
+  form into a way of finding out who has an account at a men's salon.
 - **Sessions.** Signed JWT in an `httpOnly` `SameSite=Lax` cookie
   (`Secure` in production), 8h expiry, issuer-pinned. Nothing readable by JS.
 - **CSRF.** SameSite cookie + Origin allow-list (`WEB_ORIGINS`) on every
@@ -70,14 +81,25 @@ network hops, distributed-transaction pain, and ops cost with no benefit.
   "user exists" oracles beyond registration), code hashes never selected,
   helmet security headers, cross-origin XHR denied.
 - **Audit trail.** Logins (success + failure), staff creation, code resets,
-  status changes, payment flags — queryable at `GET /audit` (super admin).
+  password resets requested and completed, account deactivation, stock
+  movements, status changes, payment flags — queryable at `GET /audit`
+  (super admin).
 - **Business rules enforced server-side.** Cancellation requires a reason;
   double-booking rejected with a conflict check; status values whitelisted.
 
 ## Notifications (PRD 5.4)
 
 Outbox pattern: triggers write rows to a `notifications` table; a scheduler
-loop (15s) delivers due rows with retries and exponential backoff. Messages
+loop (15s) delivers due rows with retries and exponential backoff.
+
+The same queue carries **email** as well as SMS — a reset link cannot go by SMS,
+since it is long and the address is the thing being proved. A row names its
+`channel` and its destination; retries and backoff are identical either way,
+which is the point of keeping them in one table. `EMAIL_PROVIDER=resend` with
+`RESEND_API_KEY` and `EMAIL_FROM` sends for real; unset, the dev provider prints
+the message and the whole flow is testable with nothing configured.
+
+Messages
 are never lost to a crash and API responses never block on an SMS gateway.
 
 | Trigger | Message |
@@ -125,7 +147,10 @@ and activates once you add Apple Developer credentials to `.env`
 what's missing. Checkout responses include `pointsEarned`, and bookings for
 registered clients carry a `loyalty` chip into the console.
 
-## Inventory (PRD 10)
+## Branch inventory (PRD 10)
+
+The retail shelf and back bar at each location. **The online shop's stock is
+not here** — that is a separate warehouse in its own table, see below.
 
 Products come in two kinds: `retail` (sellable at POS and online) and
 `supply` (in-salon use). Product CRUD is Super-Admin-only (delete = retire,
@@ -134,6 +159,79 @@ see their own branch and can **receive shipments** (positive additions
 only, per open item #3's recommendation); free-form adjustments are
 Super-Admin-only. Every change is an immutable `stock_movements` row with
 actor and reason (`received`, `adjustment`, `pos_sale`, `online_sale`).
+
+## The online shop's warehouse
+
+`online_stock` has **no branch column**: one pool for the whole UAE, because
+everything sold on the site is delivered from it. Asking which branch a jar
+belongs to has no answer and does not need one.
+
+Kept as a separate table rather than a column on `stock_levels` because it is
+different stock, different people and a different login. A barber using the
+last bottle of oil at Marina Walk cannot make the website sell out, and a busy
+week online cannot leave the chair short.
+
+**Reservations.** An order holds stock the moment it is placed, not days later
+when someone marks it shipped — otherwise the shop sells what it does not have
+and finds out when it tries to pack the box.
+
+```
+available = qty - reserved
+
+reserve → order placed
+release → order cancelled, back on sale
+consume → order shipped, a real movement out
+```
+
+The check that makes this safe is one statement — `UPDATE ... WHERE qty -
+reserved >= n` — so two clients ordering the last item at the same moment
+cannot both succeed. Stock already promised to an order cannot be written off
+either; cancel the order first.
+
+Routes live under `/online/inventory` and are open to the `shop_manager` role
+and the owner only. Reception and barbers get 403: how much of the company's
+stock the website may sell is not a branch's call.
+
+## User administration
+
+Three kinds of account, three ways of handing over a credential, because they
+are not the same problem:
+
+| Account | Credential | Who sets it |
+|---|---|---|
+| Staff | 4-digit keypad code | Owner types it and passes it on in person — a barber has no email account here and is standing in the same room |
+| Shop manager | id + password | Owner creates once; after that it is theirs (`/auth/shop/change-password`) |
+| Client | password | Never staff. `POST /users/clients/:id/send-reset` emails a link to the client's own inbox |
+
+Nothing can read an existing credential back — codes are an HMAC, passwords a
+hash — so the only actions are replace and switch off. Codes are globally
+unique, so a reused code is refused. Reception can add barbers to their own
+branch and nothing else.
+
+Deactivating never deletes: invoices, bookings and stock movements all
+reference these rows and the history has to stay readable. You cannot switch
+off your own account, and the last active owner is protected as well.
+
+## VAT and tax invoices
+
+A UAE tax invoice is only valid if it carries the supplier's legal name and
+Tax Registration Number. Without them the client cannot reclaim input VAT and
+the salon is not compliant, so this is not decoration.
+
+```
+BUSINESS_LEGAL_NAME=DASTAAN LIFE BARBERS L.L.C
+BUSINESS_TRN=104235451200003
+BUSINESS_ADDRESS=Zabeel 2, Dubai, UAE
+VAT_RATE=0.05
+```
+
+Defaults come from the VAT registration certificate and every value is
+env-overridable, so a correction never needs a code change. The TRN is printed
+in the invoice header and repeated in the footer — a folded or cropped receipt
+still carries it — and the business block ships with every invoice response, so
+the console and the client's own order history show it without having to
+remember. The VAT rate is read from config in one place rather than hardcoded
+per file.
 
 ## Reports & timeline history (PRD 2.2, 7, 13)
 
@@ -160,16 +258,23 @@ deactivated, so the disabled state has something to show).
 
 ## Online store (PRD 12)
 
-`GET /store/products` is the public storefront (retail items only).
-Clients place orders (`POST /store/orders`) priced entirely from the
-server-side catalog, with coupon support and 5% VAT breakdown; they see
-only their own orders. **All** order visibility and lifecycle control is
-Super-Admin-only — Admins and Barbers get 403 on store sales data, exactly
-per PRD 12.1. Status flow `placed → paid → fulfilled` (or `cancelled`) is
-enforced; fulfilment automatically draws stock from the fulfilment branch
-(`STORE_FULFIL_BRANCH`, default `b1`) as logged `online_sale` movements.
-Payment capture awaits the gateway decision (open item #5) — the
-`paid` transition is where the gateway webhook will land.
+`GET /store/products` is the public storefront (retail items only), showing
+one availability figure per product taken from the warehouse — never the branch
+shelves, which belong to the chair.
+
+**Everything is delivered.** There is no collect-from-branch: an address is
+required and validated, and the storefront asks for no branch at all. Clients
+place orders (`POST /store/orders`) priced entirely from the server-side
+catalog, with coupon support and a VAT breakdown; they see only their own
+orders. Goods are always paid in full — an appointment is a promise of time and
+can be settled afterwards, a jar of pomade walking out of the door cannot.
+
+**All** order visibility and lifecycle control is Super-Admin-only — Admins and
+Barbers get 403 on store sales data, exactly per PRD 12.1. Status flow
+`placed → paid → fulfilled` (or `cancelled`) is enforced. Placing an order
+reserves warehouse stock inside the same transaction as the insert (both or
+neither); shipping converts the hold into a real movement out; cancelling
+releases it.
 
 ## POS product sales (PRD 11)
 
@@ -179,6 +284,10 @@ priced from the catalog server-side, stock is checked first (the sale is
 rejected before any invoice exists if a line is short), products appear as
 their own invoice lines (`2× Argan Repair Serum`), and stock is drawn down
 as logged `pos_sale` movements. Coupons apply to the combined total.
+
+The desk sells off **this branch's shelf**. The online warehouse is a different
+table and cannot be reached from here, so a full warehouse will not rescue a
+short shelf — the sale is refused, which is correct.
 
 ## Reviews & ratings (PRD 5.4, 7)
 
@@ -213,15 +322,16 @@ PAYMENT_SERVICE_URL=...         # the separate payment service
 PAYMENT_SERVICE_TOKEN=...       # service-to-service auth
 ```
 
-With the flag **off**: store orders are "pay when you collect", the POS
+With the flag **off**: store orders are "pay on delivery", the POS
 records whatever method the desk actually used, `GET /config` reports
 `payments.enabled=false` so the web app never offers to charge, and every
 `/payments/*` route answers `503` with a plain explanation. With it **on**:
 store orders return `payment.required=true`, the console shows a "Card
 reader" option, and `/payments/*` proxy to the payment service.
 
-**The money-moving code lives in its own service** (`dastaan-payments`,
-not built yet) so Stripe secret keys and PCI scope never sit inside this
+**The money-moving code lives in its own service** (`dastaan-payments`, built
+and verified in isolation, though this API's boundary routes are not yet
+pointed at it) so Stripe secret keys and PCI scope never sit inside this
 API. These routes are only the boundary — flag check, authorization, branch
 scoping, audit — then a server-to-server call. Stripe supports the UAE
 (Visa/Mastercard, AED settlement) and Terminal readers (Reader M2 / BBPOS
@@ -260,6 +370,11 @@ Call sites keep writing `?` placeholders; `src/db.ts` rewrites them to
 | POST | /auth/team/change-code | staff — change own code |
 | POST | /auth/client/register | public — user ID + password |
 | POST | /auth/client/login | public (rate-limited) |
+| GET | /auth/google/start · /auth/google/callback | public — clients only |
+| POST | /auth/shop/login | public (rate-limited) — online shop manager |
+| POST | /auth/shop/change-password | shop manager — own password |
+| POST | /auth/forgot | public — emails a reset link, answers the same either way |
+| GET | /auth/reset/check · POST /auth/reset | public (token) |
 | GET | /auth/me · POST /auth/logout | any session |
 | GET | /branches · /services · /stylists | public |
 | GET | /bookings?date=&branchId= | role-scoped |
@@ -268,6 +383,14 @@ Call sites keep writing `?` placeholders; `src/db.ts` rewrites them to
 | PATCH | /bookings/:id/paid | admin/super |
 | GET/POST | /staff | admin (own-branch barbers) / super |
 | POST | /staff/:id/reset-code | super only |
+| GET | /users | super only — everyone with a way in |
+| POST | /users/staff | admin (own-branch barbers) / super |
+| POST | /users/:id/code | super only — set a staff keypad code |
+| POST | /users/shop-manager | super only — create a shop login |
+| POST | /users/:id/shop-password | super only — break-glass reset |
+| GET | /users/clients?q= | super only — registered clients, for resets |
+| POST | /users/clients/:id/send-reset | super only — emails the client |
+| PATCH | /users/:id/active | super only — never deletes |
 | POST | /bookings/:id/checkout | admin/super — pay + auto-invoice + SMS |
 | GET | /invoices · /bookings/:id/invoice | staff branch-scoped; clients own only |
 | GET | /loyalty/me · /loyalty/me/qr.svg · /loyalty/me/wallet.pkpass | client |
@@ -281,9 +404,14 @@ Call sites keep writing `?` placeholders; `src/db.ts` rewrites them to
 | GET | /inventory · /inventory/movements | admin own branch / super all |
 | POST | /inventory/receive | admin (own branch, +only) / super |
 | POST | /inventory/adjust | super only |
+| GET | /online/inventory | shop manager / super — the national warehouse |
+| POST | /online/inventory/receive | shop manager / super |
+| POST | /online/inventory/adjust | shop manager / super — counts, breakage, returns |
+| POST | /online/inventory/reorder-level | shop manager / super |
+| GET | /online/inventory/movements | shop manager / super |
 | CRUD | /coupons (+/:id/redemptions) | super only |
 | POST | /coupons/validate | staff (not barber) + clients |
-| GET | /store/products | public |
+| GET | /store/products | public — one national availability figure |
 | POST | /store/orders · GET (own) | client |
 | GET all · PATCH /store/orders/:id/status | super only (PRD 12.1) |
 | GET | /reports/sales | super only |

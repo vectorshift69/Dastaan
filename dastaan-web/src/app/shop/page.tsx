@@ -173,7 +173,9 @@ function Warehouse({ me, onSignOut }: { me: { name: string; role: string }; onSi
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <h1 className="text-xl font-bold">Warehouse stock</h1>
           <p className="text-[13px] text-charcoal/55">
-            {rows.filter((r) => r.available > 0).length} lines on sale
+            {rows.filter((r) => r.available > 0).length === 1
+              ? "1 line on sale"
+              : `${rows.filter((r) => r.available > 0).length} lines on sale`}
             {held > 0 && <> · {held} held for orders</>}
             {lowLines > 0 && <> · <span className="font-bold text-st-cancel">{lowLines} low</span></>}
           </p>

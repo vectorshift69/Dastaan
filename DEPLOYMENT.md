@@ -180,6 +180,24 @@ TWILIO_FROM=
 REVIEW_URL=https://dastaan.vercel.app/review
 GOOGLE_REVIEW_URL=<the salon's Google review link>
 
+# Password reset links. APP_URL is the PUBLIC web address — reset emails point
+# at it, so if this is wrong every link in every reset email is wrong.
+APP_URL=https://dastaan.vercel.app
+RESET_TTL_MINUTES=60
+# Unset EMAIL_PROVIDER = the dev provider, which only prints to the log. Reset
+# emails will not actually arrive until this is configured.
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=
+EMAIL_FROM="Dastaan <no-reply@yourdomain.ae>"
+
+# The registered business — printed on every tax invoice. Defaults are compiled
+# in from the VAT certificate; set these only to correct them.
+BUSINESS_LEGAL_NAME=DASTAAN LIFE BARBERS L.L.C
+BUSINESS_TRN=104235451200003
+BUSINESS_ADDRESS=Zabeel 2, Dubai, UAE
+BUSINESS_PHONE=+971 54 719 6833
+VAT_RATE=0.05
+
 # Sign in with Google — clients only. Unset = feature off, button hidden.
 GOOGLE_CLIENT_ID=<from Google Cloud console>
 GOOGLE_CLIENT_SECRET=<from Google Cloud console>
@@ -193,9 +211,28 @@ Never commit these. Rotate anything that has ever been in a chat or a repo.
 
 ---
 
-## 6. Go-live checklist
+## 6. First run against a live database
+
+Migrations run at boot and are safe on a database that already has data —
+verified by rebuilding the previous schema with six weeks of invoices and
+booting the new code on top of it. But two things only exist in the seed, so a
+production database that is **not** re-seeded starts without them:
+
+1. **No online shop manager.** Console → **Team** → *Add a manager*. Set the
+   first password and hand it over; they change it themselves at `/shop`.
+2. **An empty warehouse**, so the storefront shows everything sold out. That is
+   correct rather than broken — the website may only sell what has been put
+   into it. Sign in at `/shop` and *Receive* each product.
+
+Doing both is also the quickest way to check the two new screens work.
+
+## 7. Go-live checklist
 
 - [ ] `PAYMENTS_ENABLED=1` only once the payments service is deployed and tested
+- [ ] `APP_URL` points at the real public web address, or reset links break
+- [ ] `EMAIL_PROVIDER` configured, or password reset emails silently go nowhere
+- [ ] Confirm the TRN on a real invoice PDF matches the VAT certificate
+- [ ] Change the demo shop-manager password (`shop1234`) if the seed ever ran
 - [ ] Vercel plan: the free tier is **non-commercial**; move the project to Pro
       before the salon takes real bookings and payments
 - [ ] Supabase on a plan that doesn't pause, plus automated backups

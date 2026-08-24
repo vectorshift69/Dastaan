@@ -85,7 +85,13 @@ async function logEvent(bookingId: string, actorId: string | null, actorRole: st
 export default async function bookingRoutes(app: FastifyInstance) {
   /* -------- list bookings (role-scoped) -------- */
   app.get("/bookings", async (req, reply) => {
-    const s = await requireAuth(req, reply);
+    /* An allow-list, not requireAuth. This used to say requireAuth and then
+       branch on role, which meant the LAST branch — "admin or super" — caught
+       anyone who was not a client or a barber. When shop_manager was added it
+       landed there and could read the whole appointment book: names, phone
+       numbers, loyalty balances. Naming who may enter is the only version of
+       this that stays correct when a role is added. */
+    const s = await requireRole(req, reply, ["client", "barber", "admin", "super_admin"]);
     if (!s) return;
     const q = req.query as { date?: string; branchId?: string };
 
@@ -244,9 +250,9 @@ export default async function bookingRoutes(app: FastifyInstance) {
 
   /* -------- create booking (client self-serve or staff) -------- */
   app.post("/bookings", async (req, reply) => {
-    const s = await requireAuth(req, reply);
+    /* barbers do not take bookings; the shop manager has no business here */
+    const s = await requireRole(req, reply, ["client", "admin", "super_admin"]);
     if (!s) return;
-    if (s.role === "barber") return reply.code(403).send({ error: "Barbers cannot create bookings" });
 
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success)
@@ -481,7 +487,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
 
   /* shared loader with per-role authorization */
   const loadInvoiceAuthorized = async (req: Parameters<typeof requireAuth>[0], reply: Parameters<typeof requireAuth>[1], bookingId: string) => {
-    const s = await requireAuth(req, reply);
+    const s = await requireRole(req, reply, ["client", "barber", "admin", "super_admin"]);
     if (!s) return null;
     const row = await db.prepare("SELECT * FROM invoices WHERE booking_id = ?").get(bookingId) as
       | Parameters<typeof invoiceToApi>[0]

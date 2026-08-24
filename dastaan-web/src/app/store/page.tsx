@@ -181,7 +181,7 @@ export default function StorePage() {
         )}
 
         <p className="mt-14 text-center text-xs text-ivory/35">
-          Prices include 5% VAT · Collect in branch or ask the desk about delivery ·{" "}
+          Prices include 5% VAT · Delivered anywhere in the UAE ·{" "}
           <Link href="/orders" className="text-gold-2 hover:text-gold">My orders</Link>
         </p>
       </main>

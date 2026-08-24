@@ -112,6 +112,13 @@ Live site: **https://dastaan-uae.vercel.app**
 | Client login | `/login` → `demo` / `demo1234` | Loyalty card, Gold tier |
 | Invoice PDF | a past paid booking | A5 branded PDF downloads |
 | Payments off | `/store` cart | "Place order", not "Pay now" |
+| Store stock | `/store` | Sold-out lines dimmed and unbuyable; "3 left" where scarce |
+| Delivery only | `/store` cart | Asks for an address; no branch picker anywhere |
+| TRN on invoice | invoice PDF | `TRN 104235451200003` in the header **and** footer |
+| Team tab | console → Team | Everyone who can sign in; owner marked "You" |
+| Shop back office | `/shop` → `shop` / `shop1234` | Warehouse stock, one national figure |
+| Shop is separate | `/shop` as reception | Sign-in form, not the warehouse |
+| Forgot password | `/login` → Forgot password? | Reaches `/forgot`, not a dead `#` |
 
 First request after idle takes ~1 minute — Render Free spins down after 15.
 
@@ -122,9 +129,25 @@ First request after idle takes ~1 minute — Render Free spins down after 15.
 - **Keep-warm ping**: cron-job.org hitting `https://dastaan-api.onrender.com/health`
   every 10 minutes. Stops Render sleeping and stops Supabase pausing at 7 days idle.
 
+## After deploying to a database that is not re-seeded
+
+The seed creates the shop manager and stocks the warehouse. A live database
+that keeps its data has neither, so:
+
+1. Console → **Team** → add a shop manager and set their first password.
+2. Sign in at `/shop` → **Receive** stock for each product.
+
+Until step 2 the storefront shows everything sold out. That is correct: the
+website can only sell what has been put into the warehouse.
+
 ## Still open (not blocking the demo)
 
-- `dastaan-payments` service (Stripe online + Terminal); `PAYMENTS_ENABLED=0` until it's live
+- `dastaan-payments` is built and tested in isolation, but this API's
+  `/payments/*` boundary is not wired to it and the booking wizard has no
+  pay-now step. `PAYMENTS_ENABLED=0` until both are done
+- Email is unconfigured (`EMAIL_PROVIDER` unset), so reset links only print to
+  the Render log
+- GPS attendance — day-2 requirement, not started
 - WhatsApp/SMS provider — `SMS_PROVIDER=console`, so notifications only print to the Render log
 - **Rotate the Supabase password (`Dastaan@123`) and `CODE_PEPPER`** before go-live — both have been in a chat transcript. Changing `CODE_PEPPER` invalidates every staff code, so re-seed after
 - **The repo is public now** — good for the portfolio, but it also means anyone can read `render.yaml`, the schema and the demo codes. Nothing secret is committed, but keep it that way

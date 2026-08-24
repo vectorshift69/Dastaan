@@ -58,7 +58,7 @@ async function replyServiceError(reply: { code: (n: number) => { send: (b: unkno
 export default async function paymentRoutes(app: FastifyInstance) {
   /* -------- online: create a Payment Intent for a store order -------- */
   app.post("/payments/intent", async (req, reply) => {
-    const s = await requireAuth(req, reply);
+    const s = await requireRole(req, reply, ["client", "admin", "super_admin"]);
     if (!s) return;
     if (!paymentsEnabled(reply, "online")) return;
 

@@ -92,9 +92,9 @@ export default async function couponRoutes(app: FastifyInstance) {
 
   /* -------- validate: any signed-in user (POS staff or store client) -------- */
   app.post("/coupons/validate", async (req, reply) => {
-    const s = await requireAuth(req, reply);
+    /* the desk at POS, or a client in the store — nobody else */
+    const s = await requireRole(req, reply, ["client", "admin", "super_admin"]);
     if (!s) return;
-    if (s.role === "barber") return reply.code(403).send({ error: "Not allowed" });
     const parsed = validateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid input" });
     const result = await checkCoupon(parsed.data.code, parsed.data.amount, parsed.data.context);
