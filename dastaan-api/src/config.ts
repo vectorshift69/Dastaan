@@ -8,9 +8,8 @@
 /*   PAYMENTS_ENABLED=0  → nothing charges a card anywhere. Store       */
 /*                         orders are "pay in branch", POS records the  */
 /*                         method the desk actually used, and every     */
-/*                         payment-service route answers 503.           */
-/*   PAYMENTS_ENABLED=1  → the payment service (separate deployable,    */
-/*                         PCI scope isolated) is live.                 */
+/*                         payment route answers 503.                   */
+/*   PAYMENTS_ENABLED=1  → Stripe is live.                              */
 /*                                                                     */
 /* PAYMENT_MODES picks which capture paths are on: online, terminal.   */
 /* ------------------------------------------------------------------ */
@@ -75,9 +74,27 @@ export const config = {
     online: truthy(process.env.PAYMENTS_ENABLED) && modes.includes("online"),
     /** Stripe Terminal card readers at the front desk */
     terminal: truthy(process.env.PAYMENTS_ENABLED) && modes.includes("terminal"),
-    /** where the payment service lives (its own deployable) */
-    serviceUrl: process.env.PAYMENT_SERVICE_URL ?? null,
     currency: "AED",
+    stripe: {
+      secretKey: process.env.STRIPE_SECRET_KEY ?? "",
+      /** Set after creating the endpoint in Stripe. Without it webhooks are refused. */
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+    },
+    /* ---- how a booking may be paid ----
+       Two choices at booking time and nothing in between: settle the whole
+       thing now, or pay nothing now and settle after the visit — at the desk
+       or from the client's own account in the app. No part-payments, because
+       a half-paid appointment is a reconciliation problem for the salon and a
+       confusing screen for the client.
+
+       PAY_LATER_ENABLED exists so the salon can insist on prepayment later
+       without a code change, if no-shows become a problem. */
+    booking: {
+      payNowEnabled: process.env.PAY_NOW_ENABLED !== "0",
+      payLaterEnabled: process.env.PAY_LATER_ENABLED !== "0",
+      /** a prepaid booking cancelled this far ahead is refunded in full */
+      refundableUntilHours: Number(process.env.REFUND_HOURS ?? 24),
+    },
   },
 } as const;
 

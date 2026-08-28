@@ -57,6 +57,14 @@ app.get("/health", async () => ({ ok: true, service: "dastaan-api" }));
 /* feature flags the web app reads on load (payments go/no-go) */
 app.get("/config", async () => publicConfig());
 
+/* Stripe webhooks need the raw body to verify the signature, so JSON
+   parsing is turned off for that one route. */
+app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
+  if (req.url?.startsWith("/webhook")) return done(null, body);
+  try { done(null, JSON.parse(body.toString("utf8"))); }
+  catch { done(new Error("Invalid JSON"), undefined); }
+});
+
 await app.register(authRoutes);
 await app.register(googleAuthRoutes);
 await app.register(bookingRoutes);

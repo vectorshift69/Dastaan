@@ -59,6 +59,23 @@ services:
       # must match an authorised redirect URI on that OAuth client exactly
       - key: GOOGLE_REDIRECT_URI
         sync: false
-      # payments stay off until the payment service is deployed
+      # payments stay off until the salon is ready to take cards
       - key: PAYMENTS_ENABLED
         value: "0"
+      - key: PAYMENT_MODES
+        value: online,terminal
+      # THE SALON'S Stripe account — money settles to them, not to us.
+      # Start with the test key (sk_test_…) and only swap to live at go-live.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # from Stripe -> Developers -> Webhooks, endpoint https://<this-service>.onrender.com/webhook
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # --- how a booking may be paid: the salon's commercial choice ---
+      - key: PAY_NOW_ENABLED
+        value: "1"
+      - key: PAY_LATER_ENABLED
+        value: "1"
+      # a prepaid appointment cancelled this far ahead is refunded in full
+      - key: REFUND_HOURS
+        value: "24"

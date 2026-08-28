@@ -194,6 +194,7 @@ export async function bulkInsert(
 
 /* Every table the app owns, child-first — used by the seed's --reset. */
 export const APP_TABLES = [
+  "webhook_events", "payments",
   "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
   "coupon_redemptions", "coupons", "online_stock_movements", "online_stock",
   "stock_movements", "stock_levels", "products",
@@ -571,6 +572,66 @@ export async function migrate() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users (lower(email));
+
+    /* ---- payments ----
+       Folded in from the former dastaan-payments service. Same database as
+       everything else — one salon, one set of books. */
+
+    /* Every intent we ever create, and how it ended. This is the ledger the
+       salon's accountant would reconcile against their Stripe dashboard, so
+       nothing is deleted and nothing is overwritten in place except status. */
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL UNIQUE,          -- Stripe PaymentIntent id
+      /* the three things a client can pay for:
+           order   — a store order
+           booking — the whole appointment, paid up front at booking time
+           invoice — an unpaid bill settled after the visit, from the app     */
+      kind TEXT NOT NULL CHECK (kind IN ('order','booking','invoice')),
+      order_id TEXT,                            -- exactly one of these three
+      booking_id TEXT,
+      invoice_id TEXT,
+      client_id TEXT,
+      amount REAL NOT NULL,                     -- dirhams, as charged
+      currency TEXT NOT NULL,
+      status TEXT NOT NULL
+        CHECK (status IN ('requires_payment','succeeded','failed','cancelled','refunded')),
+      refunded_amount REAL NOT NULL DEFAULT 0,
+      failure_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (
+        (CASE WHEN order_id   IS NULL THEN 0 ELSE 1 END) +
+        (CASE WHEN booking_id IS NULL THEN 0 ELSE 1 END) +
+        (CASE WHEN invoice_id IS NULL THEN 0 ELSE 1 END) = 1
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_payments_order ON payments (order_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments (booking_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments (invoice_id);
+
+    /* Stripe delivers webhooks at least once, and will retry for days if we
+       ever answer slowly. Recording the event id before acting is what stops
+       a retry marking the same order paid twice or refunding twice. */
+    CREATE TABLE IF NOT EXISTS webhook_events (
+      id TEXT PRIMARY KEY,                      -- Stripe's event id
+      type TEXT NOT NULL,
+      payment_intent TEXT,
+      received_at TEXT NOT NULL
+    );
+
+    /* Whether the client already paid online sits on the booking itself, so
+       the front desk can see it at the chair even if payments are disabled.
+         unpaid  — nothing taken; settle at the desk or in the app afterwards
+         prepaid — paid in full when they booked                              */
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid';
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS prepaid_amount REAL NOT NULL DEFAULT 0;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;
+
+    /* A bill the client is going to settle later needs to stay open. Existing
+       invoices were all taken at the desk, so they default to settled. */
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS settled INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS settled_at TEXT;
   `);
 }
 
