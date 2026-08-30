@@ -5,8 +5,10 @@ import { useState } from "react";
 import { useCart } from "@/lib/cart";
 import { useConfig } from "@/lib/config";
 import { CURRENCY } from "@/lib/data";
+import StripePaymentForm from "@/components/StripePaymentForm";
 
 type Placed = { orderNo: string; total: number; vat: number; discount: number };
+type PendingOrder = Placed & { id: string };
 
 export default function CartDrawer({ onClose }: { onClose: () => void }) {
   const cart = useCart();
@@ -22,7 +24,41 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
      address is the one thing we always have to ask for. */
   const [address, setAddress] = useState("");
 
+  /* Order has been created (unpaid) and is waiting on a card, or on the
+     client choosing "pay on delivery" instead. */
+  const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [intentLoading, setIntentLoading] = useState(false);
+  const [intentError, setIntentError] = useState<string | null>(null);
+  const [paidOnline, setPaidOnline] = useState(false);
+
   const total = Math.max(0, cart.subtotal - (coupon?.discount ?? 0));
+
+  const startPaymentIntent = async (orderId: string) => {
+    setIntentLoading(true);
+    setIntentError(null);
+    try {
+      const res = await fetch("/api/payments/intent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setIntentError(d.error ?? "Could not start payment. You can still pay on delivery.");
+        return;
+      }
+      setClientSecret(d.clientSecret);
+    } catch {
+      setIntentError("Can't reach the payment server. You can still pay on delivery.");
+    } finally {
+      setIntentLoading(false);
+    }
+  };
+
+  const payOnDelivery = () => {
+    if (pendingOrder) setPlaced(pendingOrder);
+  };
 
   const applyCoupon = async () => {
     setCouponErr(null);
@@ -58,8 +94,14 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
       const d = await res.json().catch(() => ({}));
       if (res.status === 401 || res.status === 403) { setNeedsSignIn(true); return; }
       if (!res.ok) { setError(d.error ?? "Could not place the order"); return; }
-      setPlaced({ orderNo: d.orderNo, total: d.total, vat: d.vat, discount: d.discount });
+      const order: PendingOrder = { id: d.id, orderNo: d.orderNo, total: d.total, vat: d.vat, discount: d.discount };
       cart.clear();
+      if (d.payment?.required) {
+        setPendingOrder(order);
+        await startPaymentIntent(order.id);
+      } else {
+        setPlaced(order);
+      }
     } catch {
       setError("Can't reach the server");
     } finally {
@@ -74,15 +116,54 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
       <aside className="animate-fade-in relative flex h-full w-full max-w-md flex-col border-l border-ivory/10 bg-coal shadow-panel">
         <header className="flex items-center justify-between border-b border-ivory/10 px-6 py-5">
           <h2 className="font-display text-xl text-ivory">
-            {placed ? "Order placed" : `Your cart${cart.count ? ` · ${cart.count}` : ""}`}
+            {placed
+              ? "Order placed"
+              : pendingOrder
+                ? "Payment"
+                : `Your cart${cart.count ? ` · ${cart.count}` : ""}`}
           </h2>
           <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-ivory/45 hover:bg-white/5 hover:text-ivory">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
         </header>
 
-        {/* ---- confirmation ---- */}
-        {placed ? (
+        {/* ---- payment (order placed, unpaid, waiting on a card or "pay on delivery") ---- */}
+        {pendingOrder && !placed ? (
+          <div className="animate-fade-up flex flex-1 flex-col px-6 py-8">
+            <p className="text-sm text-ivory/55">{pendingOrder.orderNo}</p>
+            <h3 className="font-display mt-1 text-2xl text-ivory">
+              {CURRENCY} {pendingOrder.total.toFixed(2)}
+            </h3>
+
+            <div className="mt-6">
+              {intentLoading ? (
+                <p className="text-sm text-ivory/45">Preparing payment…</p>
+              ) : clientSecret ? (
+                <StripePaymentForm
+                  clientSecret={clientSecret}
+                  amountLabel={`${CURRENCY} ${pendingOrder.total.toFixed(2)}`}
+                  onSuccess={() => { setPaidOnline(true); setPlaced(pendingOrder); }}
+                />
+              ) : intentError ? (
+                <>
+                  <p className="animate-shake rounded-lg border border-st-cancel/40 bg-st-cancel/10 px-4 py-2.5 text-sm text-[#e08a80]">
+                    {intentError}
+                  </p>
+                  <button
+                    onClick={() => startPaymentIntent(pendingOrder.id)}
+                    className="btn-ghost mt-4 rounded-full px-6 py-2.5 text-sm"
+                  >
+                    Try again
+                  </button>
+                </>
+              ) : null}
+            </div>
+
+            <button onClick={payOnDelivery} className="btn-ghost mt-6 w-full rounded-full py-3 text-sm tracking-wide">
+              Pay on delivery instead
+            </button>
+          </div>
+        ) : placed ? (
           <div className="animate-fade-up flex flex-1 flex-col items-center justify-center px-8 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full border border-gold bg-gold/10">
               <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#e3c25e" strokeWidth="2"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -92,7 +173,7 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               {CURRENCY} {placed.total.toFixed(2)} · incl. VAT {CURRENCY} {placed.vat.toFixed(2)}
             </p>
             <p className="mt-6 text-xs leading-relaxed text-ivory/40">
-              {payments.online
+              {paidOnline
                 ? "Payment received. We'll email you when it ships."
                 : "We'll confirm your order and let you know when it ships. Pay on delivery."}
             </p>

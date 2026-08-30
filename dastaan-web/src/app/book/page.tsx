@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Logo from "@/components/Logo";
+import StripePaymentForm from "@/components/StripePaymentForm";
+import { useConfig } from "@/lib/config";
 import {
   branches,
   services,
@@ -11,7 +13,53 @@ import {
   type Service,
 } from "@/lib/data";
 
-const STEPS = ["Branch", "Services", "Barber", "Time", "Details"] as const;
+const BASE_STEPS = ["Branch", "Services", "Barber", "Time", "Details"] as const;
+const PAYMENT_STEP = 5;
+
+/* Kept across the /login?next=/book round-trip (and an accidental refresh)
+   so a client who reaches step 5 without an account doesn't lose their
+   branch/service/barber/time picks while they sign in. sessionStorage, not
+   localStorage — this is a live in-progress draft, not something that
+   should outlive the tab, and localStorage isn't reliably available in
+   every preview/embedded context this runs in. */
+const WIZARD_KEY = "dastaan.booking.wizard.v1";
+
+type WizardDraft = {
+  step: number;
+  branchId: string | null;
+  picked: string[];
+  barberId: string | "any" | null;
+  date: string;
+  slot: string | null;
+  forWho: "me" | "other";
+  guest: { name: string; phone: string; email: string };
+};
+
+function loadWizardDraft(): Partial<WizardDraft> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(WIZARD_KEY);
+    return raw ? (JSON.parse(raw) as Partial<WizardDraft>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveWizardDraft(draft: WizardDraft) {
+  try {
+    window.sessionStorage.setItem(WIZARD_KEY, JSON.stringify(draft));
+  } catch {
+    // storage full or blocked — the wizard still works, it just won't survive a redirect
+  }
+}
+
+function clearWizardDraft() {
+  try {
+    window.sessionStorage.removeItem(WIZARD_KEY);
+  } catch {
+    /* nothing to clean up if it never wrote */
+  }
+}
 
 /* Local calendar date — never toISOString(), which would roll over to
    tomorrow after 20:00 in Dubai and book people into the wrong day. */
@@ -68,24 +116,38 @@ function Field({
 }
 
 export default function BookingWizard() {
-  const [step, setStep] = useState(0);
-  const [branchId, setBranchId] = useState<string | null>(null);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [barberId, setBarberId] = useState<string | "any" | null>(null);
-  const [date, setDate] = useState<string>(localDay(0));
-  const [slot, setSlot] = useState<string | null>(null);
+  /* the lazy initializer runs exactly once, on first render, so a later
+     re-render never re-reads storage and clobbers in-progress edits */
+  const [draft] = useState<Partial<WizardDraft>>(() => loadWizardDraft());
+
+  const [step, setStep] = useState(draft.step ?? 0);
+  const [branchId, setBranchId] = useState<string | null>(draft.branchId ?? null);
+  const [picked, setPicked] = useState<string[]>(draft.picked ?? []);
+  const [barberId, setBarberId] = useState<string | "any" | null>(draft.barberId ?? null);
+  const [date, setDate] = useState<string>(draft.date ?? localDay(0));
+  const [slot, setSlot] = useState<string | null>(draft.slot ?? null);
   const [confirmed, setConfirmed] = useState(false);
 
   /* who is signed in — an appointment has to belong to somebody */
   const [me, setMe] = useState<{ name: string; role: string } | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
-  const [forWho, setForWho] = useState<"me" | "other">("me");
-  const [guest, setGuest] = useState({ name: "", phone: "", email: "" });
+  const [forWho, setForWho] = useState<"me" | "other">(draft.forWho ?? "me");
+  const [guest, setGuest] = useState(draft.guest ?? { name: "", phone: "", email: "" });
 
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* pay-now step (Fix 2) */
+  const cfg = useConfig();
+  const [choices, setChoices] = useState<{ payNow: boolean; payLater: boolean } | null>(null);
+  const [bookingId, setBookingId] = useState<string | null>(null);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState<number | null>(null);
+  const [intentLoading, setIntentLoading] = useState(false);
+  const [intentError, setIntentError] = useState<string | null>(null);
+  const [paidOnline, setPaidOnline] = useState(false);
 
   const branch = branches.find((b) => b.id === branchId);
   const branchBarbers = barbers.filter((b) => b.branchId === branchId);
@@ -95,6 +157,16 @@ export default function BookingWizard() {
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => localDay(i)), []);
 
+  /* only offer to charge a card once both the master switch (from /api/config)
+     AND the booking-specific choice (from /payments/choices) agree — never
+     draw a payment step we can't actually honour */
+  const payOnline = cfg.payments.online && !!choices?.payNow;
+  const payLaterAvailable = !!choices?.payLater;
+  const STEPS = useMemo(
+    () => (payOnline ? [...BASE_STEPS, "Payment"] : [...BASE_STEPS]),
+    [payOnline]
+  );
+
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : null))
@@ -102,6 +174,22 @@ export default function BookingWizard() {
       .catch(() => setMe(null))
       .finally(() => setMeLoaded(true));
   }, []);
+
+  useEffect(() => {
+    fetch("/api/payments/choices")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setChoices(d ? { payNow: !!d.payNow, payLater: !!d.payLater } : { payNow: false, payLater: false }))
+      .catch(() => setChoices({ payNow: false, payLater: false }));
+  }, []);
+
+  /* Persist the in-progress wizard so it survives the /login?next=/book
+     round-trip — cleared once the booking is actually confirmed or the
+     client backs out. Skipped once a booking id exists: at that point the
+     appointment is already made and there is nothing left to resume. */
+  useEffect(() => {
+    if (bookingId) return;
+    saveWizardDraft({ step, branchId, picked, barberId, date, slot, forWho, guest });
+  }, [step, branchId, picked, barberId, date, slot, forWho, guest, bookingId]);
 
   /* Ask the server what is actually free. Re-asked whenever the barber, the
      day or the length of the appointment changes — a longer appointment needs
@@ -140,6 +228,38 @@ export default function BookingWizard() {
   const toggleService = (id: string) =>
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
+  /* Opens a Payment Intent for the booking that was just created. The
+     booking already exists and is unpaid at this point — a failure here
+     just leaves the client able to pay at the salon instead, never blocks
+     the appointment itself. */
+  const startPaymentIntent = useCallback(async (id: string) => {
+    setIntentLoading(true);
+    setIntentError(null);
+    try {
+      const res = await fetch("/api/payments/intent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bookingId: id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setIntentError(data.error ?? "Could not start payment. You can still pay at the salon.");
+        return;
+      }
+      setClientSecret(data.clientSecret);
+      setPaymentAmount(data.amount);
+    } catch {
+      setIntentError("Can't reach the payment server. You can still pay at the salon.");
+    } finally {
+      setIntentLoading(false);
+    }
+  }, []);
+
+  const payAtSalon = () => {
+    clearWizardDraft();
+    setConfirmed(true);
+  };
+
   if (confirmed) {
     const b = barberId === "any" ? null : branchBarbers.find((x) => x.id === barberId);
     return (
@@ -166,7 +286,10 @@ export default function BookingWizard() {
             )}
           </p>
           <div className="gold-rule mx-auto my-8 w-24" />
-          <p className="text-xs leading-relaxed tracking-wider text-ivory/35">
+          {paidOnline && (
+            <p className="text-sm font-semibold text-gold-2">Paid in full — see you soon.</p>
+          )}
+          <p className="mt-4 text-xs leading-relaxed tracking-wider text-ivory/35">
             A confirmation text has been sent to your phone.
             <br />
             You&apos;ll get a reminder 2 hours before your appointment.
@@ -187,7 +310,7 @@ export default function BookingWizard() {
           <Link href="/" aria-label="Dastaan — home" className="text-ivory transition-opacity hover:opacity-80">
             <Logo markClass="h-7 w-auto" wordClass="h-[19px] w-auto" />
           </Link>
-          <Link href="/" className="text-sm text-ivory/45 hover:text-gold-2">
+          <Link href="/" onClick={clearWizardDraft} className="text-sm text-ivory/45 hover:text-gold-2">
             Cancel
           </Link>
         </div>
@@ -510,6 +633,44 @@ export default function BookingWizard() {
                 )}
               </>
             )}
+
+            {step === PAYMENT_STEP && (
+              <>
+                <h1 className="font-display text-4xl font-medium text-ivory">Payment</h1>
+                <p className="mt-2 max-w-md text-sm leading-relaxed text-ivory/45">
+                  Your appointment is booked. Pay now to settle it in full, or pay at the
+                  salon after your visit.
+                </p>
+
+                <div className="mt-8 max-w-md">
+                  {intentLoading ? (
+                    <p className="text-sm text-ivory/45">Preparing payment…</p>
+                  ) : clientSecret ? (
+                    <StripePaymentForm
+                      clientSecret={clientSecret}
+                      amountLabel={`${CURRENCY} ${paymentAmount ?? total}`}
+                      onSuccess={() => {
+                        setPaidOnline(true);
+                        clearWizardDraft();
+                        setConfirmed(true);
+                      }}
+                    />
+                  ) : intentError ? (
+                    <>
+                      <p className="animate-shake rounded-lg border border-st-cancel/40 bg-st-cancel/10 px-4 py-2.5 text-sm text-[#e08a80]">
+                        {intentError}
+                      </p>
+                      <button
+                        onClick={() => bookingId && startPaymentIntent(bookingId)}
+                        className="btn-ghost mt-4 rounded-full px-6 py-2.5 text-sm"
+                      >
+                        Try again
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
 
           {/* ---------------- summary card ---------------- */}
@@ -542,7 +703,7 @@ export default function BookingWizard() {
               </span>
             </div>
             <div className="mt-4 flex gap-3 lg:mt-6">
-              {step > 0 && (
+              {step > 0 && step < PAYMENT_STEP && (
                 <button
                   onClick={() => setStep(step - 1)}
                   className="btn-ghost flex-1 rounded-full py-3 text-sm tracking-wide"
@@ -550,6 +711,15 @@ export default function BookingWizard() {
                   Back
                 </button>
               )}
+              {step === PAYMENT_STEP && payLaterAvailable && (
+                <button
+                  onClick={payAtSalon}
+                  className="btn-ghost flex-1 rounded-full py-3 text-sm tracking-wide"
+                >
+                  Pay at the salon
+                </button>
+              )}
+              {step < PAYMENT_STEP && (
               <button
                 disabled={!canNext}
                 onClick={async () => {
@@ -575,7 +745,18 @@ export default function BookingWizard() {
                       }),
                     });
 
-                    if (res.ok) { setConfirmed(true); return; }
+                    if (res.ok) {
+                      const created: { id: string } = await res.json();
+                      if (payOnline) {
+                        setBookingId(created.id);
+                        setStep(PAYMENT_STEP);
+                        await startPaymentIntent(created.id);
+                      } else {
+                        clearWizardDraft();
+                        setConfirmed(true);
+                      }
+                      return;
+                    }
 
                     /* Do NOT claim success when the server said no. The chair may
                        have been taken in the seconds since the grid loaded, so
@@ -603,6 +784,7 @@ export default function BookingWizard() {
               >
                 {step === 4 ? (booking ? "Confirming…" : "Confirm booking") : "Continue"}
               </button>
+              )}
             </div>
           </aside>
         </div>
