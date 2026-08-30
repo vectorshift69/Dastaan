@@ -194,7 +194,7 @@ export async function bulkInsert(
 
 /* Every table the app owns, child-first — used by the seed's --reset. */
 export const APP_TABLES = [
-  "webhook_events", "payments",
+  "payment_reconciliation_needed", "webhook_events", "payments",
   "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
   "coupon_redemptions", "coupons", "online_stock_movements", "online_stock",
   "stock_movements", "stock_levels", "products",
@@ -594,8 +594,12 @@ export async function migrate() {
       client_id TEXT,
       amount REAL NOT NULL,                     -- dirhams, as charged
       currency TEXT NOT NULL,
-      status TEXT NOT NULL
-        CHECK (status IN ('requires_payment','succeeded','failed','cancelled','refunded')),
+      /* pending -> processing -> paid -> refunded, or pending/processing ->
+         failed/cancelled. The allowed set lives in the payments_status_ck
+         constraint below (and in isValidStatusTransition() in
+         payment-integrity.ts) so there is exactly one place that says what
+         a legal transition is. */
+      status TEXT NOT NULL,
       refunded_amount REAL NOT NULL DEFAULT 0,
       failure_reason TEXT,
       created_at TEXT NOT NULL,
@@ -619,6 +623,41 @@ export async function migrate() {
       payment_intent TEXT,
       received_at TEXT NOT NULL
     );
+
+    /* The compensation trail: written any time Stripe has confirmed money
+       moved (a payment succeeded, a refund landed) but our own database
+       could not be made to agree with it — an amount mismatch, a refund
+       bigger than the original charge, or a database write that failed
+       after Stripe had already acted. Nothing here is ever inferred from
+       this table automatically; it exists so a human can find and resolve
+       it, hence the resolved_* columns staying empty until someone does. */
+    CREATE TABLE IF NOT EXISTS payment_reconciliation_needed (
+      id TEXT PRIMARY KEY,
+      payment_id TEXT,
+      intent_id TEXT,
+      event_id TEXT,
+      event_type TEXT,
+      reason TEXT NOT NULL,
+      detail TEXT,
+      amount REAL,
+      currency TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      resolved_by TEXT,
+      resolution_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_reconciliation_open
+      ON payment_reconciliation_needed (created_at) WHERE resolved_at IS NULL;
+
+    /* Explicit, named, and re-applied on every boot (drop-then-add, same
+       convention as the other CHECK constraints below) so the allowed
+       status set lives in exactly one place regardless of whether this
+       database first saw the table before or after the status vocabulary
+       changed. */
+    ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
+    ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_ck;
+    ALTER TABLE payments ADD CONSTRAINT payments_status_ck
+      CHECK (status IN ('pending','processing','paid','failed','cancelled','refunded'));
 
     /* Whether the client already paid online sits on the booking itself, so
        the front desk can see it at the chair even if payments are disabled.

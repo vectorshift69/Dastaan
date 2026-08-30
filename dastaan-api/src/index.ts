@@ -6,6 +6,8 @@ import rateLimit from "@fastify/rate-limit";
 import { migrate } from "./db.js";
 import { config, publicConfig } from "./config.js";
 import { originGuard } from "./security.js";
+import { PaymentDomainError, StripeConfigurationError } from "./payment-errors.js";
+import { logCriticalPaymentAlert } from "./payment-integrity.js";
 import authRoutes from "./routes/auth.js";
 import googleAuthRoutes from "./routes/google-auth.js";
 import bookingRoutes from "./routes/bookings.js";
@@ -43,13 +45,45 @@ app.addHook("onRequest", async (req, reply) => {
   if (!await originGuard(req, reply)) return reply;
 });
 
-/* no stack traces or internals ever leave the server */
+/* ------------------------------------------------------------------ */
+/* Centralised error handler.                                          */
+/*                                                                     */
+/* Every route in this app throws rather than crashes on its own — this */
+/* is the single place that decides what an uncaught exception looks   */
+/* like once it leaves a route handler. No stack trace, SQL error,      */
+/* Stripe error, or internal field name ever reaches a response body;   */
+/* the full error (with a stack trace and this request's id) is logged  */
+/* server-side instead, and the request id is handed back to the       */
+/* client so they can reference it in a support request.               */
+/*                                                                     */
+/* Payment routes (routes/payments.ts) catch and answer their own       */
+/* PaymentDomainError instances directly via sendPaymentError(), with   */
+/* the specific status/code that error carries — the handling for them  */
+/* here is a defence-in-depth backstop in case one is ever thrown       */
+/* somewhere that forgot to catch it, not the primary path.             */
+/* ------------------------------------------------------------------ */
 app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
-  if (err.statusCode && err.statusCode < 500) {
-    return reply.code(err.statusCode).send({ error: err.message });
+  const requestId = req.id;
+
+  if (err instanceof PaymentDomainError) {
+    if (err instanceof StripeConfigurationError) {
+      logCriticalPaymentAlert(req.log, { action: "stripe_configuration_error", requestId, details: err.details });
+    }
+    req.log.error({ err, code: err.code, details: err.details, requestId, route: req.url }, "unhandled payment error");
+    return reply.code(err.status).send({ error: err.clientMessage, code: err.code, requestId });
   }
-  req.log.error(err);
-  return reply.code(500).send({ error: "Something went wrong" });
+
+  // A route elsewhere in the app deliberately threw a curated, safe,
+  // short business message with its own status (e.g. "Booking not found",
+  // 404) — never a stack trace or a driver error, so it is fine to pass
+  // through as-is. Anything without an explicit sub-500 status falls to
+  // the generic branch below.
+  if (err.statusCode && err.statusCode < 500) {
+    return reply.code(err.statusCode).send({ error: err.message, requestId });
+  }
+
+  req.log.error({ err, requestId, route: req.url }, "unhandled error");
+  return reply.code(500).send({ error: "Something went wrong", requestId });
 });
 
 app.get("/health", async () => ({ ok: true, service: "dastaan-api" }));

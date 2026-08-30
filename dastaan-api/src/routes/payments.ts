@@ -3,25 +3,38 @@
 /*                                                                     */
 /* Folded in from the former dastaan-payments service — previously a    */
 /* separate deployable so Stripe keys and PCI scope never sat inside    */
-/* the main API. Merged here so there is only one service to run.       */
-/* Mounted under /payments — see PAYMENTS.md for the full flow, schema  */
-/* and security model. In short:                                       */
+/* the main API. Mounted under /payments — see PAYMENTS.md for the      */
+/* full flow, schema, and security model. In short:                     */
 /*                                                                     */
 /*  1. The amount is decided here, from the database — never taken     */
-/*     from the request. Otherwise anyone could pay AED 1 for a         */
-/*     AED 300 bill. See resolvePayable().                             */
+/*     from the request. See resolvePayable().                         */
 /*                                                                     */
 /*  2. A Stripe webhook signature is verified before this file touches  */
-/*     the database at all. See verifyStripeWebhook().                 */
+/*     the database at all. See the /webhook handler below.            */
 /*                                                                     */
-/*  3. Webhooks are recorded before they are acted on. Stripe delivers  */
-/*     at least once and retries for days, so "did we already handle    */
-/*     this event?" has to be answered from storage, not from memory.   */
+/*  3. Webhooks are recorded before they are acted on — Stripe retries  */
+/*     for days, so duplicates must be answered without reprocessing.   */
 /*     See recordWebhookEventIfNew().                                  */
 /*                                                                     */
-/*  4. Every Stripe credential lives in stripe.ts and nowhere else —    */
-/*     this file never imports the `stripe` package for its runtime     */
-/*     value, only for types, and never reads config.payments.stripe.  */
+/*  4. Every Stripe credential lives in stripe.ts and nowhere else.     */
+/*     This file never imports the `stripe` package's runtime value,    */
+/*     only its types, and never reads config.payments.stripe.         */
+/*                                                                     */
+/*  5. Every failure is one of the typed errors in payment-errors.ts —  */
+/*     never a bare Error, never a raw Stripe/database error passed     */
+/*     through. Each route handler wraps its own work in try/catch and  */
+/*     hands anything it catches to sendPaymentError(), which answers   */
+/*     known payment errors with their own status/code/message and      */
+/*     rethrows anything else so index.ts's centralised error handler   */
+/*     can apply its own safety net — nothing unsanitised ever reaches  */
+/*     a client either way.                                            */
+/*                                                                     */
+/*  6. A payment is never marked paid optimistically — only the         */
+/*     payment_intent.succeeded webhook does that, and only after       */
+/*     assertAmountMatches() confirms Stripe charged what our own       */
+/*     record expects. A refund the same way: never marked refunded     */
+/*     without assertRefundWithinOriginal() first. See                  */
+/*     payment-integrity.ts.                                            */
 /*                                                                     */
 /* NOTE — rate limiting: these routes currently rely only on the global */
 /* limit registered in index.ts (200 req/min/IP). /intent and /refund   */
@@ -38,24 +51,49 @@ import type { Role, Session } from "../security.js";
 import { config, paymentsEnabled } from "../config.js";
 import {
   createPaymentIntent,
+  cancelPaymentIntent,
   createRefund,
   verifyWebhookSignature,
   toMajor,
   paymentChoices,
-  WebhookNotConfiguredError,
-  InvalidWebhookSignatureError,
 } from "../stripe.js";
 import type { Stripe } from "../stripe.js";
+import {
+  PaymentDomainError,
+  ValidationError,
+  OwnershipError,
+  NotFoundError,
+  ConflictError,
+  PaymentsDisabledError,
+  PaymentError,
+  StripeConfigurationError,
+  WebhookNotConfiguredError,
+  InvalidWebhookSignatureError,
+  IntegrityViolationError,
+} from "../payment-errors.js";
+import {
+  type Logger,
+  isValidStatusTransition,
+  assertValidTransition,
+  assertAmountMatches,
+  assertRefundWithinOriginal,
+  logPaymentEvent,
+  logCriticalPaymentAlert,
+  recordReconciliationNeeded,
+  findOrderById,
+  findBookingById,
+  findInvoiceById,
+  priceBookingServices,
+} from "../payment-integrity.js";
 
-/** Minimal logger shape the helpers below need — matches Fastify's req.log. */
-type Logger = {
-  error(obj: unknown, msg?: string): void;
-  warn(obj: unknown, msg?: string): void;
-  info(obj: unknown, msg?: string): void;
-};
+/** A reply object shaped like what every route handler here actually calls. */
+type ReplyLike = { code(n: number): { send(b: unknown): unknown } };
 
 /** The three things a client can pay for. */
 type PaymentKind = "order" | "booking" | "invoice";
+
+/** An amount resolved from our own records, ready to charge. */
+type Payable = { amount: number; kind: PaymentKind; description: string };
 
 /** A resolved amount is never negative or zero — there is nothing to collect below this. */
 const MIN_PAYABLE_AMOUNT = 0;
@@ -69,11 +107,10 @@ const INTENT_ROLES: Role[] = ["client", "admin", "super_admin"];
 /** Refunds move money back out, so only staff may trigger one. */
 const REFUND_ROLES: Role[] = ["admin", "super_admin"];
 
-/* ---- messages sent to clients ----
+/* ---- messages sent to clients for cases with no typed error of their own ----
    Never the underlying Stripe or database error — those are logged
-   server-side (with req.log) and nothing about them leaves this process. */
+   server-side and nothing about them leaves this process. */
 const GENERIC_VALIDATION_ERROR = "Invalid request";
-const GENERIC_PAYMENT_ERROR = "Could not process the payment. Please try again.";
 const GENERIC_SERVER_ERROR = "Something went wrong";
 
 const intentSchema = z.object({
@@ -94,8 +131,9 @@ const refundSchema = z.object({
 type RefundInput = z.infer<typeof refundSchema>;
 
 /* ==================================================================== */
-/* Route registration — handlers only orchestrate; see the helpers below */
-/* for the actual work.                                                  */
+/* Route registration — every handler is wrapped so nothing it or a      */
+/* helper it calls can reach the client, or Fastify's own default        */
+/* handler, unsanitised. See sendPaymentError() below.                   */
 /* ==================================================================== */
 
 export default async function paymentRoutes(app: FastifyInstance) {
@@ -104,26 +142,52 @@ export default async function paymentRoutes(app: FastifyInstance) {
     if (!session) return;
     if (!paymentsEnabled(reply, "online")) return;
 
-    const parsed = intentSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: GENERIC_VALIDATION_ERROR });
+    try {
+      const parsed = intentSchema.safeParse(req.body);
+      if (!parsed.success) throw new ValidationError(GENERIC_VALIDATION_ERROR);
+      const input = parsed.data;
 
-    const payable = await resolvePayable(parsed.data, session);
-    if (!payable.ok) return reply.code(payable.status).send({ error: payable.error });
+      const payable = await resolvePayable(input, session);
+      const paymentId = uid();
+      const intent = await createPaymentIntent({
+        amountAed: payable.amount,
+        currency: STRIPE_CURRENCY,
+        description: payable.description,
+        // so the salon can trace a charge back to a booking or bill
+        metadata: {
+          kind: payable.kind,
+          orderId: input.orderId ?? "",
+          bookingId: input.bookingId ?? "",
+          invoiceId: input.invoiceId ?? "",
+          paymentId,
+        },
+        // a double tap, or a retried request, returns the same intent rather
+        // than charging the client twice
+        idempotencyKey: `${payable.kind}:${input.orderId ?? input.bookingId ?? input.invoiceId}`,
+      });
 
-    const paymentId = uid();
-    const intent = await createStripeIntent(payable, parsed.data, paymentId, req.log);
-    if (!intent) return reply.code(502).send({ error: GENERIC_PAYMENT_ERROR });
+      await persistPaymentOrCompensate(paymentId, intent, payable, input, session, req.log);
 
-    await recordPayment(paymentId, intent.id, payable, parsed.data, session);
+      await audit("payment_intent_created", {
+        actorId: session.sub,
+        actorRole: session.role,
+        detail: describePayable(payable.kind, input),
+        ip: req.ip,
+      });
+      logPaymentEvent(req.log, {
+        requestId: req.id,
+        userId: session.sub,
+        action: "intent_created",
+        amount: payable.amount,
+        currency: STRIPE_CURRENCY,
+        stripePaymentIntentId: intent.id,
+        outcome: "success",
+      });
 
-    await audit("payment_intent_created", {
-      actorId: session.sub,
-      actorRole: session.role,
-      detail: describePayable(payable.kind, parsed.data),
-      ip: req.ip,
-    });
-
-    return { amount: payable.amount, currency: STRIPE_CURRENCY, clientSecret: intent.client_secret };
+      return { amount: payable.amount, currency: STRIPE_CURRENCY, clientSecret: intent.client_secret };
+    } catch (err) {
+      return sendPaymentError(reply, { requestId: req.id, log: req.log, userId: session.sub, action: "intent_create_failed" }, err);
+    }
   });
 
   app.get("/choices", async () => paymentChoices());
@@ -133,112 +197,198 @@ export default async function paymentRoutes(app: FastifyInstance) {
     if (!session) return;
     if (!paymentsEnabled(reply, "online")) return;
 
-    const parsed = refundSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: GENERIC_VALIDATION_ERROR });
+    try {
+      const parsed = refundSchema.safeParse(req.body);
+      if (!parsed.success) throw new ValidationError(GENERIC_VALIDATION_ERROR);
 
-    const result = await processRefund(parsed.data, session, req.ip, req.log);
-    if (!result.ok) return reply.code(result.status).send({ error: result.error });
-
-    return { ok: true, refunded: result.refunded };
+      const refunded = await processRefund(parsed.data, session, req.id, req.ip, req.log);
+      return { ok: true, refunded };
+    } catch (err) {
+      return sendPaymentError(reply, { requestId: req.id, log: req.log, userId: session.sub, action: "refund_failed" }, err);
+    }
   });
 
   /* Unauthenticated — a valid Stripe signature is the proof, checked before
      anything else in this handler runs. */
   app.post("/webhook", async (req, reply) => {
     const signature = req.headers["stripe-signature"];
-    if (typeof signature !== "string") return reply.code(400).send({ error: "Missing signature" });
+    if (typeof signature !== "string") return reply.code(400).send({ error: "Missing signature", requestId: req.id });
 
-    const verification = verifyStripeWebhook(req.body as Buffer, signature, req.log);
-    if (!verification.ok) return reply.code(verification.status).send({ error: verification.error });
+    let event: Stripe.Event;
+    try {
+      event = verifyWebhookSignature(req.body as Buffer, signature);
+    } catch (err) {
+      return sendWebhookVerificationError(reply, req.id, req.log, err);
+    }
 
     // Only now — signature verified — is the database touched at all.
-    const event = verification.event;
     const isNew = await recordWebhookEventIfNew(event);
     if (!isNew) {
-      req.log.info({ eventId: event.id }, "duplicate webhook ignored");
+      req.log.warn(
+        { event: "payment_event", action: "webhook_duplicate", eventId: event.id, eventType: event.type, requestId: req.id },
+        "duplicate webhook event received"
+      );
       return reply.code(200).send({ received: true });
     }
 
     try {
-      await handleWebhookEvent(event);
+      await handleWebhookEvent(event, req.id, req.log);
     } catch (err) {
-      req.log.error({ err, eventId: event.id }, "webhook handling failed");
+      if (err instanceof IntegrityViolationError) {
+        // Deliberately refused — a retry redelivers the identical mismatch,
+        // so it cannot help, and the critical alert already fired inside
+        // the handler. Keep the idempotency marker so Stripe does not spend
+        // days retrying an event we will never accept.
+        logPaymentEvent(req.log, { requestId: req.id, action: "webhook_rejected", outcome: "failure", errorCode: err.code });
+        return reply.code(400).send({ error: err.clientMessage, code: err.code, requestId: req.id });
+      }
+
+      req.log.error(
+        { err, eventId: event.id, eventType: event.type, requestId: req.id },
+        "webhook handling failed — letting Stripe retry"
+      );
       // Let Stripe retry: remove the marker so the retry is not treated as a
-      // duplicate of a delivery we never actually finished.
+      // duplicate of a delivery we never actually finished. DO NOT swallow
+      // this and answer 200 — a 500 here is correct.
       await forgetWebhookEvent(event.id);
-      return reply.code(500).send({ error: GENERIC_SERVER_ERROR });
+      return reply.code(500).send({ error: GENERIC_SERVER_ERROR, requestId: req.id });
     }
 
     return { received: true };
   });
 }
 
+/**
+ * Central place a route handler sends a caught error to. A known payment
+ * error (anything extending PaymentDomainError) is logged with full
+ * structured detail and answered with its own status/code/clientMessage.
+ * Anything else is rethrown, unhandled, so index.ts's centralised
+ * `setErrorHandler` can apply the exact same safety net it applies to
+ * every other route — this function never guesses at a safe response for
+ * an error it does not recognise.
+ * @param reply the Fastify reply
+ * @param ctx request-scoped logging context
+ * @param err whatever the route handler caught
+ */
+function sendPaymentError(
+  reply: ReplyLike,
+  ctx: { requestId: string; log: Logger; userId?: string | null; action: "intent_create_failed" | "refund_failed" },
+  err: unknown
+): void {
+  if (!(err instanceof PaymentDomainError)) {
+    // Not one of ours — let the centralised handler decide, rather than
+    // risk sending back something unsanitised.
+    throw err;
+  }
+
+  if (err instanceof StripeConfigurationError) {
+    // Our Stripe credentials are broken — nothing will succeed until a
+    // human fixes it. This is not a per-request problem, so it always
+    // pages regardless of which route hit it.
+    logCriticalPaymentAlert(ctx.log, { action: "stripe_configuration_error", requestId: ctx.requestId, details: err.details });
+  }
+
+  logPaymentEvent(ctx.log, {
+    requestId: ctx.requestId,
+    userId: ctx.userId,
+    action: ctx.action,
+    outcome: "failure",
+    errorCode: err.code,
+  });
+  // The technical detail — never sent to the client — for whoever is
+  // debugging this later. Ordinary, expected conditions (a bad request, an
+  // order that's already paid, a declined card) log at "warn" so they don't
+  // drown out genuine server/Stripe failures ("error") in an alerting
+  // dashboard.
+  const logDetail = { code: err.code, details: err.details, requestId: ctx.requestId };
+  if (err.status >= 500) ctx.log.error(logDetail, err.message);
+  else ctx.log.warn(logDetail, err.message);
+
+  reply.code(err.status).send({ error: err.clientMessage, code: err.code, requestId: ctx.requestId });
+}
+
+/**
+ * Answers a failed webhook signature verification. Split out from the
+ * route handler only to keep it short — still runs before any database
+ * access, same as the caller.
+ * @param reply the Fastify reply
+ * @param requestId this request's Fastify-assigned id
+ * @param log request logger
+ * @param err whatever verifyWebhookSignature() threw
+ */
+function sendWebhookVerificationError(reply: ReplyLike, requestId: string, log: Logger, err: unknown): void {
+  if (err instanceof WebhookNotConfiguredError) {
+    log.error({ requestId }, "STRIPE_WEBHOOK_SECRET not set — refusing webhook");
+    reply.code(503).send({ error: GENERIC_SERVER_ERROR, requestId });
+    return;
+  }
+  if (err instanceof InvalidWebhookSignatureError) {
+    // Anyone can POST here. Without a valid signature it is not Stripe —
+    // log that it was rejected, never the payload or header that failed.
+    log.warn({ requestId }, "rejected a webhook with an invalid signature");
+    reply.code(400).send({ error: "Bad signature", requestId });
+    return;
+  }
+  throw err;
+}
+
 /* ==================================================================== */
 /* /intent — resolving what is owed, and creating the Stripe intent.     */
 /* ==================================================================== */
 
-/** A payable amount successfully worked out from our own records. */
-type PayableResolved = { ok: true; amount: number; kind: PaymentKind; description: string };
-/** Why a payable could not be resolved, as an HTTP status + client-safe message. */
-type PayableRejected = { ok: false; status: number; error: string };
-type PayableResolution = PayableResolved | PayableRejected;
-
 /**
  * Works out what is actually owed for an intent request, entirely from the
  * database — nothing here is taken from the request body but the id of the
- * thing being paid for. This is the amount-integrity boundary: whatever this
- * function returns is what Stripe is asked to charge.
+ * thing being paid for. This is the amount-integrity boundary: whatever
+ * this function returns is what Stripe is asked to charge.
  * @param input the parsed /intent request body
  * @param session the authenticated caller, for ownership checks
- * @returns the resolved amount/kind/description, or a rejection to send back
+ * @returns the resolved amount/kind/description
+ * @throws {NotFoundError | OwnershipError | ConflictError | PaymentsDisabledError}
  */
-async function resolvePayable(input: IntentInput, session: Session): Promise<PayableResolution> {
+async function resolvePayable(input: IntentInput, session: Session): Promise<Payable> {
   if (input.orderId) return resolveOrderPayable(input.orderId, session);
   if (input.bookingId) return resolveBookingPayable(input.bookingId, session);
   return resolveInvoicePayable(input.invoiceId!);
 }
 
 /**
- * Resolves a store order into a payable amount, checking that a client
- * caller owns the order (IDOR protection — order ids are guessable).
+ * Resolves a store order into a payable amount.
  * @param orderId the order to price
  * @param session the authenticated caller
- * @returns the payable, or 404/403/409 if it cannot be paid
+ * @returns the payable
+ * @throws {NotFoundError | OwnershipError | ConflictError}
  */
-async function resolveOrderPayable(orderId: string, session: Session): Promise<PayableResolution> {
+async function resolveOrderPayable(orderId: string, session: Session): Promise<Payable> {
   const order = await findOrderById(orderId);
-  if (!order) return { ok: false, status: 404, error: "Order not found" };
-  if (!ownsResource(session, order.client_id)) return { ok: false, status: 403, error: "Not allowed" };
-  if (order.status !== "placed")
-    return { ok: false, status: 409, error: `That order is already ${order.status}` };
-  return { ok: true, amount: Number(order.total), kind: "order", description: "Dastaan store order" };
+  if (!order) throw new NotFoundError("Order not found");
+  assertOwnership(session, order.client_id);
+  if (order.status !== "placed") throw new ConflictError(`That order is already ${order.status}`);
+  return { amount: Number(order.total), kind: "order", description: "Dastaan store order" };
 }
 
 /**
  * Resolves a booking into a payable amount by pricing its services fresh
- * from the database, checking that a client caller owns the booking (IDOR
- * protection), and that pay-now is switched on and the booking is still
- * payable.
+ * from the database.
  * @param bookingId the booking to price
  * @param session the authenticated caller
- * @returns the payable, or 404/403/409/503 if it cannot be paid
+ * @returns the payable
+ * @throws {PaymentsDisabledError | NotFoundError | OwnershipError | ConflictError}
  */
-async function resolveBookingPayable(bookingId: string, session: Session): Promise<PayableResolution> {
+async function resolveBookingPayable(bookingId: string, session: Session): Promise<Payable> {
   if (!config.payments.booking.payNowEnabled)
-    return { ok: false, status: 503, error: "Paying at the time of booking is switched off" };
+    throw new PaymentsDisabledError("Paying at the time of booking is switched off");
 
   const booking = await findBookingById(bookingId);
-  if (!booking) return { ok: false, status: 404, error: "Booking not found" };
-  if (!ownsResource(session, booking.client_id)) return { ok: false, status: 403, error: "Not allowed" };
-  if (booking.payment_status === "prepaid")
-    return { ok: false, status: 409, error: "That appointment is already paid" };
-  if (booking.status === "Cancelled")
-    return { ok: false, status: 409, error: "That booking is cancelled" };
+  if (!booking) throw new NotFoundError("Booking not found");
+  assertOwnership(session, booking.client_id);
+  if (booking.payment_status === "prepaid") throw new ConflictError("That appointment is already paid");
+  if (booking.status === "Cancelled") throw new ConflictError("That booking is cancelled");
 
   const amount = await priceBookingServices(JSON.parse(booking.service_ids) as string[]);
-  if (amount <= MIN_PAYABLE_AMOUNT) return { ok: false, status: 409, error: "Nothing to pay for that booking" };
+  if (amount <= MIN_PAYABLE_AMOUNT) throw new ConflictError("Nothing to pay for that booking");
 
-  return { ok: true, amount, kind: "booking", description: "Dastaan appointment" };
+  return { amount, kind: "booking", description: "Dastaan appointment" };
 }
 
 /**
@@ -246,67 +396,77 @@ async function resolveBookingPayable(bookingId: string, session: Session): Promi
  * after their visit) into a payable amount. No ownership check exists yet
  * here because invoices carry no client id of their own — see PAYMENTS.md.
  * @param invoiceId the invoice to price
- * @returns the payable, or 404/409 if it cannot be paid
+ * @returns the payable
+ * @throws {NotFoundError | ConflictError}
  */
-async function resolveInvoicePayable(invoiceId: string): Promise<PayableResolution> {
+async function resolveInvoicePayable(invoiceId: string): Promise<Payable> {
   const invoice = await findInvoiceById(invoiceId);
-  if (!invoice) return { ok: false, status: 404, error: "Bill not found" };
-  if (invoice.settled) return { ok: false, status: 409, error: "That bill is already settled" };
-  return {
-    ok: true,
-    amount: Number(invoice.total),
-    kind: "invoice",
-    description: `Dastaan ${invoice.invoice_no}`,
-  };
+  if (!invoice) throw new NotFoundError("Bill not found");
+  if (invoice.settled) throw new ConflictError("That bill is already settled");
+  return { amount: Number(invoice.total), kind: "invoice", description: `Dastaan ${invoice.invoice_no}` };
 }
 
 /**
- * Returns whether `session` may act on a resource owned by `ownerId`. Staff
- * (admin/super_admin) may act on any resource; a client session may only
- * act on their own — the check that closes the IDOR on /intent.
+ * Guards against a client session acting on a resource it does not own —
+ * the IDOR check that closes /intent. Staff (admin/super_admin) may act on
+ * any resource.
  * @param session the authenticated caller
  * @param ownerId the resource's owning client id, if any
- * @returns true if the caller is allowed to pay for this resource
+ * @throws {OwnershipError} if a client session does not own the resource
  */
-function ownsResource(session: Session, ownerId: string | null): boolean {
-  return session.role !== "client" || ownerId === session.sub;
+function assertOwnership(session: Session, ownerId: string | null): void {
+  if (session.role === "client" && ownerId !== session.sub) throw new OwnershipError("Not allowed");
 }
 
 /**
- * Calls Stripe to open a Payment Intent for a resolved payable, catching and
- * logging any Stripe failure rather than letting it reach the client.
- * @param payable the amount/kind/description to charge, from resolvePayable()
- * @param input the original /intent request, for building metadata
- * @param paymentId our own payment row id, tagged onto the Stripe intent
- * @param log request logger to record the real failure reason
- * @returns the created Stripe intent, or null if Stripe could not be reached
+ * Writes the payment ledger row for a newly created Stripe intent. If the
+ * write fails, the Stripe intent is cancelled immediately — the client
+ * must never receive a clientSecret for an intent our own ledger has no
+ * record of. If the cancel ALSO fails, a payment_reconciliation_needed
+ * record is written so a genuinely dangling intent is never silently lost.
+ * @param paymentId our own generated payment row id
+ * @param intent the Stripe intent just created
+ * @param payable the resolved amount/kind this intent is for
+ * @param input the original /intent request
+ * @param session the authenticated caller
+ * @param log request logger
+ * @throws {PaymentError} always, if the write fails — the original DB error is never re-thrown directly
  */
-async function createStripeIntent(
-  payable: PayableResolved,
-  input: IntentInput,
+async function persistPaymentOrCompensate(
   paymentId: string,
+  intent: Stripe.PaymentIntent,
+  payable: Payable,
+  input: IntentInput,
+  session: Session,
   log: Logger
-): Promise<Stripe.PaymentIntent | null> {
+): Promise<void> {
   try {
-    return await createPaymentIntent({
-      amountAed: payable.amount,
-      currency: STRIPE_CURRENCY,
-      description: payable.description,
-      // so the salon can trace a charge back to a booking or bill
-      metadata: {
-        kind: payable.kind,
-        orderId: input.orderId ?? "",
-        bookingId: input.bookingId ?? "",
-        invoiceId: input.invoiceId ?? "",
-        paymentId,
-      },
-      // a double tap, or a retried request, returns the same intent rather
-      // than charging the client twice
-      idempotencyKey: `${payable.kind}:${input.orderId ?? input.bookingId ?? input.invoiceId}`,
+    await recordPayment(paymentId, intent.id, payable, input, session);
+  } catch (dbErr) {
+    log.error(
+      { err: dbErr, stripePaymentIntentId: intent.id, paymentId },
+      "failed to record payment — cancelling the Stripe intent"
+    );
+    try {
+      await cancelPaymentIntent(intent.id);
+    } catch (cancelErr) {
+      await recordReconciliationNeeded(
+        {
+          paymentId,
+          intentId: intent.id,
+          reason: "db_write_failed_and_cancel_failed",
+          detail:
+            "Payment row could not be written and the Stripe intent could not be cancelled — a live intent may exist with no local record.",
+          amount: payable.amount,
+          currency: STRIPE_CURRENCY,
+        },
+        log
+      );
+      log.error({ err: cancelErr, stripePaymentIntentId: intent.id }, "failed to cancel dangling Stripe intent after DB write failure");
+    }
+    throw new PaymentError("Could not record the payment. Please try again.", {
+      details: { stripePaymentIntentId: intent.id },
     });
-  } catch (err) {
-    log.error({ err }, "stripe payment intent creation failed");
-    return null;
   }
 }
 
@@ -324,35 +484,48 @@ function describePayable(kind: PaymentKind, input: IntentInput): string {
 /* /refund                                                               */
 /* ==================================================================== */
 
-type RefundResult = { ok: true; refunded: number } | { ok: false; status: number; error: string };
-
 /**
  * Refunds the succeeded payment behind a booking or invoice: validates it
- * hasn't already been refunded, calls Stripe, then updates our own ledger.
- * The role check for who may call this happens in the route handler, before
- * this function — never inside it — so no Stripe call can be reached
- * without already having proven the caller is staff.
+ * hasn't already been refunded, locks it into "processing" so a second
+ * click cannot race a second refund, calls Stripe, then updates our own
+ * ledger. The role check for who may call this happens in the route
+ * handler before this function — never inside it — so no Stripe call can
+ * be reached without already having proven the caller is staff.
  * @param input the parsed /refund request body
  * @param session the authenticated (already role-checked) caller
+ * @param requestId this request's Fastify-assigned id, for the log entry
  * @param ip the caller's IP, recorded on the audit log entry
- * @param log request logger to record a real Stripe failure reason
- * @returns the refunded amount, or a rejection to send back
+ * @param log request logger
+ * @returns the refunded amount
+ * @throws {NotFoundError | ConflictError | CardDeclinedError | StripeUnavailableError | StripeConfigurationError | PaymentError}
  */
-async function processRefund(input: RefundInput, session: Session, ip: string, log: Logger): Promise<RefundResult> {
+async function processRefund(
+  input: RefundInput,
+  session: Session,
+  requestId: string,
+  ip: string,
+  log: Logger
+): Promise<number> {
   const payment = input.bookingId
     ? await findPaymentByBooking(input.bookingId)
     : await findPaymentByInvoice(input.invoiceId!);
 
-  if (!payment) return { ok: false, status: 404, error: "No payment found to refund" };
-  if (payment.status !== "succeeded") return { ok: false, status: 409, error: "That payment never completed" };
+  if (!payment) throw new NotFoundError("No payment found to refund");
+  if (payment.status !== "paid") throw new ConflictError("That payment never completed");
   if (Number(payment.refunded_amount) >= Number(payment.amount))
-    return { ok: false, status: 409, error: "That payment has already been refunded" };
+    throw new ConflictError("That payment has already been refunded");
 
+  // Lock it before the Stripe call — a second /refund request for the same
+  // payment arriving while this one is in flight sees status "processing",
+  // not "paid", and is refused by the check above instead of racing us.
+  await markPaymentProcessing(payment.id);
   try {
     await createRefund(payment.intent_id);
   } catch (err) {
-    log.error({ err }, "stripe refund failed");
-    return { ok: false, status: 502, error: GENERIC_PAYMENT_ERROR };
+    // The Stripe call never took effect — release the lock so a later
+    // attempt is not blocked forever.
+    await markPaymentPaid(payment.id);
+    throw err;
   }
 
   // The webhook confirms it, but recording it now stops a second press
@@ -366,59 +539,39 @@ async function processRefund(input: RefundInput, session: Session, ip: string, l
     detail: `${input.bookingId ? "booking" : "invoice"}:${input.bookingId ?? input.invoiceId}`,
     ip,
   });
+  logPaymentEvent(log, {
+    requestId,
+    userId: session.sub,
+    action: "refund_created",
+    amount: Number(payment.amount),
+    currency: STRIPE_CURRENCY,
+    stripePaymentIntentId: payment.intent_id,
+    outcome: "success",
+  });
 
-  return { ok: true, refunded: Number(payment.amount) };
+  return Number(payment.amount);
 }
 
 /* ==================================================================== */
 /* /webhook                                                              */
 /* ==================================================================== */
 
-type WebhookVerification = { ok: true; event: Stripe.Event } | { ok: false; status: number; error: string };
-
 /**
- * Verifies a webhook request's signature before any part of it is trusted.
- * This is the security boundary for the whole route: nothing below this
- * function runs — no database read or write — until it returns ok.
- * @param payload the raw request body, exactly as Stripe sent it
- * @param signature the stripe-signature header
- * @param log request logger to record a rejected/misconfigured webhook
- * @returns the verified event, or a rejection to send back
- */
-function verifyStripeWebhook(payload: Buffer, signature: string, log: Logger): WebhookVerification {
-  try {
-    return { ok: true, event: verifyWebhookSignature(payload, signature) };
-  } catch (err) {
-    if (err instanceof WebhookNotConfiguredError) {
-      log.error("STRIPE_WEBHOOK_SECRET not set — refusing webhook");
-      return { ok: false, status: 503, error: GENERIC_SERVER_ERROR };
-    }
-    if (err instanceof InvalidWebhookSignatureError) {
-      // Anyone can POST here. Without a valid signature it is not Stripe —
-      // log that it was rejected, never the payload or header that failed.
-      log.warn("rejected a webhook with an invalid signature");
-      return { ok: false, status: 400, error: "Bad signature" };
-    }
-    log.error({ err }, "unexpected webhook verification failure");
-    return { ok: false, status: 400, error: "Bad signature" };
-  }
-}
-
-/**
- * Dispatches a verified Stripe event to its handler. Every case below wraps
- * its database writes in a single transaction, so a failure partway through
- * (e.g. a booking that no longer exists) cannot leave the ledger updated
- * without the booking updated, or vice versa.
+ * Dispatches a verified Stripe event to its handler.
  * @param event the verified Stripe event
+ * @param requestId this request's Fastify-assigned id, for log entries
+ * @param log request logger
  */
-async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
+async function handleWebhookEvent(event: Stripe.Event, requestId: string, log: Logger): Promise<void> {
   switch (event.type) {
     case "payment_intent.succeeded":
-      return handlePaymentSucceeded(event.data.object as Stripe.PaymentIntent);
+      return handlePaymentSucceeded(event.data.object as Stripe.PaymentIntent, event, requestId, log);
+    case "payment_intent.processing":
+      return handlePaymentProcessing(event.data.object as Stripe.PaymentIntent);
     case "payment_intent.payment_failed":
-      return handlePaymentFailed(event.data.object as Stripe.PaymentIntent);
+      return handlePaymentFailed(event.data.object as Stripe.PaymentIntent, requestId, log);
     case "charge.refunded":
-      return handleChargeRefunded(event.data.object as Stripe.Charge);
+      return handleChargeRefunded(event.data.object as Stripe.Charge, event, requestId, log);
     default:
       // Everything else is noise for us; acknowledging it stops Stripe
       // retrying events we will never care about.
@@ -427,20 +580,94 @@ async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
 }
 
 /**
- * Marks a payment succeeded and settles whatever it paid for (order,
- * booking or invoice), all inside one transaction.
+ * Marks a payment paid and settles whatever it paid for (order, booking or
+ * invoice), all inside one transaction — so a failure partway through
+ * cannot leave the ledger updated without the booking/order/invoice
+ * updated, or vice versa. The amount Stripe reports is verified against
+ * our own record before anything is written; a mismatch never reaches the
+ * database update at all. If the transaction fails for ANY reason after
+ * Stripe has already settled the money, a payment_reconciliation_needed
+ * record is written before the original error is re-thrown — money is
+ * never silently lost even if this handler cannot finish.
  * @param intent the Stripe PaymentIntent that succeeded
+ * @param event the original webhook event, for the reconciliation record
+ * @param requestId this request's Fastify-assigned id, for the log entry
+ * @param log request logger
  */
-async function handlePaymentSucceeded(intent: Stripe.PaymentIntent): Promise<void> {
+async function handlePaymentSucceeded(
+  intent: Stripe.PaymentIntent,
+  event: Stripe.Event,
+  requestId: string,
+  log: Logger
+): Promise<void> {
+  let payerId: string | null = null;
+  let paymentId: string | undefined;
+
+  try {
+    await db.transaction(async () => {
+      const payment = await findPaymentByIntentId(intent.id);
+      if (!payment) return; // not ours
+      payerId = payment.client_id;
+      paymentId = payment.id;
+
+      assertAmountMatches(payment.id, Number(payment.amount), intent.amount, log);
+
+      await markPaymentPaid(payment.id);
+      if (payment.kind === "order" && payment.order_id) await markOrderPaid(payment.order_id);
+      if (payment.kind === "booking" && payment.booking_id)
+        await markBookingPrepaid(payment.booking_id, Number(payment.amount));
+      if (payment.kind === "invoice" && payment.invoice_id) await markInvoiceSettled(payment.invoice_id);
+    });
+  } catch (err) {
+    await recordReconciliationNeeded(
+      {
+        paymentId,
+        intentId: intent.id,
+        eventId: event.id,
+        eventType: event.type,
+        reason: err instanceof PaymentDomainError ? err.code : "webhook_transaction_failed",
+        detail:
+          err instanceof PaymentDomainError
+            ? err.message
+            : "unexpected error while applying payment_intent.succeeded",
+        amount: toMajor(intent.amount),
+        currency: intent.currency,
+      },
+      log
+    );
+    throw err;
+  }
+
+  logPaymentEvent(log, {
+    requestId,
+    userId: payerId,
+    action: "payment_succeeded",
+    amount: toMajor(intent.amount),
+    currency: intent.currency,
+    stripePaymentIntentId: intent.id,
+    outcome: "success",
+  });
+}
+
+/**
+ * Moves a payment into "processing" when Stripe reports it has begun an
+ * asynchronous capture (some payment methods settle this way; cards
+ * usually go straight to succeeded). Only acts when the current status is
+ * still "pending" — Stripe does not guarantee webhook delivery order, and
+ * "processing" is also used as /refund's concurrency lock (see
+ * VALID_STATUS_TRANSITIONS in payment-integrity.ts), so a late-arriving
+ * processing event for an intent that has already succeeded, or a payment
+ * that's mid-refund, is silently ignored rather than incorrectly
+ * regressing its status. Lower-stakes than the other webhook handlers —
+ * no money has moved yet — so a failure here just lets Stripe's normal
+ * retry handle it, no reconciliation record.
+ * @param intent the Stripe PaymentIntent now processing
+ */
+async function handlePaymentProcessing(intent: Stripe.PaymentIntent): Promise<void> {
   await db.transaction(async () => {
     const payment = await findPaymentByIntentId(intent.id);
-    if (!payment) return; // not ours
-
-    await markPaymentSucceeded(payment.id);
-    if (payment.kind === "order" && payment.order_id) await markOrderPaid(payment.order_id);
-    if (payment.kind === "booking" && payment.booking_id)
-      await markBookingPrepaid(payment.booking_id, Number(payment.amount));
-    if (payment.kind === "invoice" && payment.invoice_id) await markInvoiceSettled(payment.invoice_id);
+    if (!payment || payment.status !== "pending") return; // not ours, or a stale/out-of-order event
+    await markPaymentProcessing(payment.id);
   });
 }
 
@@ -448,89 +675,96 @@ async function handlePaymentSucceeded(intent: Stripe.PaymentIntent): Promise<voi
  * Records why a payment failed, so the front desk and the client's own
  * account can show a reason rather than a silent nothing-happened.
  * @param intent the Stripe PaymentIntent that failed
+ * @param requestId this request's Fastify-assigned id, for the log entry
+ * @param log request logger
  */
-async function handlePaymentFailed(intent: Stripe.PaymentIntent): Promise<void> {
+async function handlePaymentFailed(intent: Stripe.PaymentIntent, requestId: string, log: Logger): Promise<void> {
+  const reason = intent.last_payment_error?.message ?? "Payment failed";
   await db.transaction(async () => {
-    await markPaymentFailed(intent.id, intent.last_payment_error?.message ?? "Payment failed");
+    await markPaymentFailed(intent.id, reason);
+  });
+  logPaymentEvent(log, {
+    requestId,
+    action: "payment_failed",
+    amount: toMajor(intent.amount),
+    currency: intent.currency,
+    stripePaymentIntentId: intent.id,
+    outcome: "failure",
+    errorCode: intent.last_payment_error?.code,
   });
 }
 
 /**
- * Records a refund confirmed at Stripe's end (as opposed to the one we
- * initiate ourselves in processRefund — this is the async confirmation of
- * either path).
+ * Records a refund confirmed at Stripe's end (the async confirmation of
+ * either an in-app refund or one issued directly from the Stripe
+ * dashboard). The refunded amount is verified against the original charge
+ * before anything is written — it can never exceed it. Like
+ * handlePaymentSucceeded, any failure after Stripe has already refunded
+ * the money is captured as a reconciliation record before the error is
+ * re-thrown.
  * @param charge the Stripe Charge that was refunded
+ * @param event the original webhook event, for the reconciliation record
+ * @param requestId this request's Fastify-assigned id, for the log entry
+ * @param log request logger
  */
-async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
+async function handleChargeRefunded(
+  charge: Stripe.Charge,
+  event: Stripe.Event,
+  requestId: string,
+  log: Logger
+): Promise<void> {
   const intentId = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
   if (!intentId) return;
-  await db.transaction(async () => {
-    await recordChargeRefund(intentId, toMajor(charge.amount_refunded));
+
+  const refundedAmount = toMajor(charge.amount_refunded);
+  let payerId: string | null = null;
+  let paymentId: string | undefined;
+
+  try {
+    await db.transaction(async () => {
+      const payment = await findPaymentByIntentId(intentId);
+      if (!payment) return; // not ours
+      payerId = payment.client_id;
+      paymentId = payment.id;
+
+      assertRefundWithinOriginal(payment.id, Number(payment.amount), refundedAmount, log);
+
+      await recordChargeRefund(intentId, refundedAmount);
+    });
+  } catch (err) {
+    await recordReconciliationNeeded(
+      {
+        paymentId,
+        intentId,
+        eventId: event.id,
+        eventType: event.type,
+        reason: err instanceof PaymentDomainError ? err.code : "webhook_transaction_failed",
+        detail: err instanceof PaymentDomainError ? err.message : "unexpected error while applying charge.refunded",
+        amount: refundedAmount,
+        currency: charge.currency,
+      },
+      log
+    );
+    throw err;
+  }
+
+  logPaymentEvent(log, {
+    requestId,
+    userId: payerId,
+    action: "refund_confirmed",
+    amount: refundedAmount,
+    currency: charge.currency,
+    stripePaymentIntentId: intentId,
+    outcome: "success",
   });
 }
 
 /* ==================================================================== */
 /* Database helpers — every payments-related query lives here, nowhere   */
-/* else in this file.                                                    */
+/* else in this file. Status-changing writes go through                 */
+/* assertValidTransition() (payment-integrity.ts) so a bug elsewhere     */
+/* can never silently skip a required step.                             */
 /* ==================================================================== */
-
-type OrderRow = { id: string; client_id: string; total: number; status: string };
-
-/**
- * Looks up a store order by id.
- * @param orderId the order id
- * @returns the order, or undefined if it does not exist
- */
-async function findOrderById(orderId: string): Promise<OrderRow | undefined> {
-  return db.prepare("SELECT id, client_id, total, status FROM orders WHERE id = ?").get<OrderRow>(orderId);
-}
-
-type BookingRow = {
-  id: string;
-  client_id: string | null;
-  service_ids: string;
-  payment_status: string;
-  status: string;
-};
-
-/**
- * Looks up a booking by id.
- * @param bookingId the booking id
- * @returns the booking, or undefined if it does not exist
- */
-async function findBookingById(bookingId: string): Promise<BookingRow | undefined> {
-  return db
-    .prepare("SELECT id, client_id, service_ids, payment_status, status FROM bookings WHERE id = ?")
-    .get<BookingRow>(bookingId);
-}
-
-/**
- * Sums the current price of each service on a booking. Prices are read
- * fresh from the services table — never trusted from the caller.
- * @param serviceIds the booking's service ids
- * @returns the total price in dirhams
- */
-async function priceBookingServices(serviceIds: string[]): Promise<number> {
-  let total = 0;
-  for (const serviceId of serviceIds) {
-    const service = await db.prepare("SELECT price FROM services WHERE id = ?").get<{ price: number }>(serviceId);
-    total += Number(service?.price ?? 0);
-  }
-  return total;
-}
-
-type InvoiceRow = { id: string; invoice_no: string; total: number; settled: number };
-
-/**
- * Looks up an invoice by id.
- * @param invoiceId the invoice id
- * @returns the invoice, or undefined if it does not exist
- */
-async function findInvoiceById(invoiceId: string): Promise<InvoiceRow | undefined> {
-  return db
-    .prepare("SELECT id, invoice_no, total, settled FROM invoices WHERE id = ?")
-    .get<InvoiceRow>(invoiceId);
-}
 
 /**
  * Inserts the payment ledger row for a newly created Stripe intent, and for
@@ -544,14 +778,14 @@ async function findInvoiceById(invoiceId: string): Promise<InvoiceRow | undefine
 async function recordPayment(
   paymentId: string,
   intentId: string,
-  payable: PayableResolved,
+  payable: Payable,
   input: IntentInput,
   session: Session
 ): Promise<void> {
   await db.prepare(
     `INSERT INTO payments (id, intent_id, kind, order_id, booking_id, invoice_id, client_id,
        amount, currency, status, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?, 'requires_payment', ?, ?)
+     VALUES (?,?,?,?,?,?,?,?,?, 'pending', ?, ?)
      ON CONFLICT (intent_id) DO NOTHING`
   ).run(
     paymentId,
@@ -597,50 +831,29 @@ async function findPaymentByInvoice(invoiceId: string): Promise<PaymentRow | und
 }
 
 /**
- * Marks a payment fully refunded.
+ * Moves a payment to "processing" — used as a lock ahead of the Stripe
+ * refund call so a concurrent second refund attempt sees a non-"paid"
+ * status and is refused, and as the ordinary intermediate state some
+ * Stripe payment methods pass through before succeeding.
  * @param paymentId the payment row id
+ * @throws {IntegrityViolationError} if the current status cannot legally move to "processing"
  */
-async function markPaymentRefunded(paymentId: string): Promise<void> {
-  await db
-    .prepare("UPDATE payments SET status = 'refunded', refunded_amount = amount, updated_at = ? WHERE id = ?")
-    .run(now(), paymentId);
+async function markPaymentProcessing(paymentId: string): Promise<void> {
+  await assertValidTransition(paymentId, "processing");
+  await db.prepare("UPDATE payments SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), paymentId);
 }
 
 /**
- * Reopens a booking as unpaid after its prepayment is refunded.
- * @param bookingId the booking id
- */
-async function markBookingUnpaid(bookingId: string): Promise<void> {
-  await db.prepare("UPDATE bookings SET payment_status = 'unpaid', prepaid_amount = 0 WHERE id = ?").run(bookingId);
-}
-
-type PaymentByIntentRow = {
-  id: string;
-  kind: string;
-  order_id: string | null;
-  booking_id: string | null;
-  invoice_id: string | null;
-  amount: number;
-};
-
-/**
- * Looks up a payment by its Stripe PaymentIntent id — how webhook events,
- * which only carry the Stripe id, are matched back to our own ledger row.
- * @param intentId the Stripe PaymentIntent id
- * @returns the payment, or undefined if it is not one of ours
- */
-async function findPaymentByIntentId(intentId: string): Promise<PaymentByIntentRow | undefined> {
-  return db
-    .prepare("SELECT id, kind, order_id, booking_id, invoice_id, amount FROM payments WHERE intent_id = ?")
-    .get<PaymentByIntentRow>(intentId);
-}
-
-/**
- * Marks a payment succeeded.
+ * Marks a payment paid. Only ever called from the payment_intent.succeeded
+ * webhook handler (after amount verification) or to release the
+ * "processing" lock when a refund attempt's Stripe call fails — never
+ * optimistically at intent-creation time.
  * @param paymentId the payment row id
+ * @throws {IntegrityViolationError} if the current status cannot legally move to "paid"
  */
-async function markPaymentSucceeded(paymentId: string): Promise<void> {
-  await db.prepare("UPDATE payments SET status = 'succeeded', updated_at = ? WHERE id = ?").run(now(), paymentId);
+async function markPaymentPaid(paymentId: string): Promise<void> {
+  await assertValidTransition(paymentId, "paid");
+  await db.prepare("UPDATE payments SET status = 'paid', updated_at = ? WHERE id = ?").run(now(), paymentId);
 }
 
 /**
@@ -679,16 +892,75 @@ async function markInvoiceSettled(invoiceId: string): Promise<void> {
  * @param intentId the Stripe PaymentIntent id
  * @param reason Stripe's own decline reason, shown to staff — never returned
  *               from an HTTP response
+ * @throws {IntegrityViolationError} if the current status cannot legally move to "failed"
  */
 async function markPaymentFailed(intentId: string, reason: string): Promise<void> {
+  const row = await db
+    .prepare("SELECT id, status FROM payments WHERE intent_id = ?")
+    .get<{ id: string; status: string }>(intentId);
+  if (!row) return;
+  if (!isValidStatusTransition(row.status, "failed")) {
+    throw new IntegrityViolationError(`Invalid payment status transition for ${row.id}: ${row.status} -> failed`, {
+      paymentId: row.id,
+      from: row.status,
+      to: "failed",
+    });
+  }
   await db
-    .prepare("UPDATE payments SET status = 'failed', failure_reason = ?, updated_at = ? WHERE intent_id = ?")
-    .run(reason, now(), intentId);
+    .prepare("UPDATE payments SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?")
+    .run(reason, now(), row.id);
 }
 
 /**
- * Records a (possibly partial) refund confirmed at Stripe's end, marking the
- * payment fully refunded once the refunded amount reaches its total.
+ * Marks a payment fully refunded, initiated from our own /refund route.
+ * @param paymentId the payment row id
+ * @throws {IntegrityViolationError} if the current status cannot legally move to "refunded"
+ */
+async function markPaymentRefunded(paymentId: string): Promise<void> {
+  await assertValidTransition(paymentId, "refunded");
+  await db
+    .prepare("UPDATE payments SET status = 'refunded', refunded_amount = amount, updated_at = ? WHERE id = ?")
+    .run(now(), paymentId);
+}
+
+/**
+ * Reopens a booking as unpaid after its prepayment is refunded.
+ * @param bookingId the booking id
+ */
+async function markBookingUnpaid(bookingId: string): Promise<void> {
+  await db.prepare("UPDATE bookings SET payment_status = 'unpaid', prepaid_amount = 0 WHERE id = ?").run(bookingId);
+}
+
+type PaymentByIntentRow = {
+  id: string;
+  kind: string;
+  order_id: string | null;
+  booking_id: string | null;
+  invoice_id: string | null;
+  client_id: string | null;
+  amount: number;
+  status: string;
+};
+
+/**
+ * Looks up a payment by its Stripe PaymentIntent id — how webhook events,
+ * which only carry the Stripe id, are matched back to our own ledger row.
+ * @param intentId the Stripe PaymentIntent id
+ * @returns the payment, or undefined if it is not one of ours
+ */
+async function findPaymentByIntentId(intentId: string): Promise<PaymentByIntentRow | undefined> {
+  return db
+    .prepare(
+      "SELECT id, kind, order_id, booking_id, invoice_id, client_id, amount, status FROM payments WHERE intent_id = ?"
+    )
+    .get<PaymentByIntentRow>(intentId);
+}
+
+/**
+ * Records a (possibly partial) refund confirmed at Stripe's end, marking
+ * the payment fully refunded once the refunded amount reaches its total.
+ * Callers must call assertRefundWithinOriginal() first — this function
+ * only writes.
  * @param intentId the Stripe PaymentIntent id
  * @param refundedAmount the total refunded so far, in dirhams
  */
