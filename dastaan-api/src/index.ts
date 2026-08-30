@@ -58,9 +58,10 @@ app.get("/health", async () => ({ ok: true, service: "dastaan-api" }));
 app.get("/config", async () => publicConfig());
 
 /* Stripe webhooks need the raw body to verify the signature, so JSON
-   parsing is turned off for that one route. */
+   parsing is turned off for that one route. Must match its mounted path —
+   see the /payments prefix on paymentRoutes below. */
 app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
-  if (req.url?.startsWith("/webhook")) return done(null, body);
+  if (req.url?.startsWith("/payments/webhook")) return done(null, body);
   try { done(null, JSON.parse(body.toString("utf8"))); }
   catch { done(new Error("Invalid JSON"), undefined); }
 });
@@ -78,7 +79,7 @@ await app.register(couponRoutes);
 await app.register(storeRoutes);
 await app.register(reviewRoutes);
 await app.register(clientRoutes);
-await app.register(paymentRoutes);
+await app.register(paymentRoutes, { prefix: "/payments" });
 
 await startScheduler(); // delivers queued SMS (confirmations, 2h reminders, feedback)
 

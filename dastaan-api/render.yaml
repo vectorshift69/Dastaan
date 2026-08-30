@@ -68,7 +68,7 @@ services:
       # Start with the test key (sk_test_…) and only swap to live at go-live.
       - key: STRIPE_SECRET_KEY
         sync: false
-      # from Stripe -> Developers -> Webhooks, endpoint https://<this-service>.onrender.com/webhook
+      # from Stripe -> Developers -> Webhooks, endpoint https://<this-service>.onrender.com/payments/webhook
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       # --- how a booking may be paid: the salon's commercial choice ---
