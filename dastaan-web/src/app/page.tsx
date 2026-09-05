@@ -6,6 +6,11 @@ import { services, barbers, branches, CURRENCY } from "@/lib/data";
 
 const Hero3D = dynamic(() => import("@/components/Hero3D"));
 
+const BRANCH_MAPS: Record<string, string> = {
+  b1: "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d115571.65657619637!2d55.15402127093883!3d25.148728606336878!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3e5f4384e630bb7f%3A0x92b321bd033cb230!2sDastaan%20Barbers%20%26%20Beyond!5e0!3m2!1sen!2sin!4v1788622146368!5m2!1sen!2sin",
+  b2: "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3610.0784701649836!2d55.27882307631447!3d25.200576077708742!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3e5f4384e630bb7f%3A0x92b321bd033cb230!2sDastaan%20Barbers%20%26%20Beyond!5e0!3m2!1sen!2sin!4v1788622241848!5m2!1sen!2sin",
+};
+
 export default function Home() {
   return (
     <div className="grain min-h-screen bg-ink text-ivory">
@@ -158,9 +163,22 @@ export default function Home() {
                   <span>{br.hours}</span>
                   <span>{br.phone}</span>
                 </div>
-                <Link href="/book" className="mt-8 inline-block text-sm font-semibold text-gold-2 transition-colors hover:text-gold">
+                <Link href={`/book?branchId=${br.id}`} className="mt-8 inline-block text-sm font-semibold text-gold-2 transition-colors hover:text-gold">
                   Book at this branch →
                 </Link>
+                {BRANCH_MAPS[br.id] && (
+                  <div className="mt-6 overflow-hidden rounded-xl">
+                    <iframe
+                      src={BRANCH_MAPS[br.id]}
+                      width="100%"
+                      height="220"
+                      style={{ border: 0 }}
+                      allowFullScreen
+                      loading="lazy"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
