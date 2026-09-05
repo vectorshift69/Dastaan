@@ -74,12 +74,12 @@ export default async function googleAuthRoutes(app: FastifyInstance) {
     if (!g.enabled)
       return reply.code(503).send({ error: "Google sign-in is not configured" });
 
-    const q = req.query as { next?: string };
+    const q = req.query as { next?: string; returnTo?: string };
     const flow: Flow = {
       state: base64url(randomBytes(24)),
       verifier: base64url(randomBytes(48)),
       nonce: base64url(randomBytes(16)),
-      next: safeNext(q.next),
+      next: safeNext(q.returnTo ?? q.next),
     };
 
     /* The flow cookie has to survive Google's cross-site redirect back to us,

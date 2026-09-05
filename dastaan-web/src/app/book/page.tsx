@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Logo from "@/components/Logo";
 import StripePaymentForm from "@/components/StripePaymentForm";
 import { useConfig } from "@/lib/config";
@@ -115,14 +116,47 @@ function Field({
   );
 }
 
-export default function BookingWizard() {
+export default function BookingWizardPage() {
+  return (
+    <Suspense fallback={null}>
+      <BookingWizard />
+    </Suspense>
+  );
+}
+
+function BookingWizard() {
+  const searchParams = useSearchParams();
+  const urlBranchId = searchParams.get("branchId");
+  const urlServiceId = searchParams.get("serviceId") ?? searchParams.get("service");
+
   /* the lazy initializer runs exactly once, on first render, so a later
      re-render never re-reads storage and clobbers in-progress edits */
-  const [draft] = useState<Partial<WizardDraft>>(() => loadWizardDraft());
+  const [draft] = useState<Partial<WizardDraft>>(() => {
+    const d = loadWizardDraft();
+    /* Bug #4: if the stored draft's booking datetime is in the past, discard it */
+    if (d.date && d.slot) {
+      const draftTime = new Date(`${d.date}T${d.slot}:00`).getTime();
+      if (draftTime < Date.now()) {
+        clearWizardDraft();
+        return {};
+      }
+    }
+    return d;
+  });
 
-  const [step, setStep] = useState(draft.step ?? 0);
-  const [branchId, setBranchId] = useState<string | null>(draft.branchId ?? null);
-  const [picked, setPicked] = useState<string[]>(draft.picked ?? []);
+  /* URL params override the draft for branch/service deep-links */
+  const [step, setStep] = useState(() => {
+    if (urlBranchId) return 1; // branch pre-selected, jump to services
+    return draft.step ?? 0;
+  });
+  const [branchId, setBranchId] = useState<string | null>(urlBranchId ?? draft.branchId ?? null);
+  const [picked, setPicked] = useState<string[]>(() => {
+    if (urlServiceId) {
+      const svc = services.find((s) => s.id === urlServiceId);
+      return svc ? [svc.id] : (draft.picked ?? []);
+    }
+    return draft.picked ?? [];
+  });
   const [barberId, setBarberId] = useState<string | "any" | null>(draft.barberId ?? null);
   const [date, setDate] = useState<string>(draft.date ?? localDay(0));
   const [slot, setSlot] = useState<string | null>(draft.slot ?? null);
@@ -138,6 +172,31 @@ export default function BookingWizard() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* Feature #12: nearest branch based on user geolocation */
+  const [nearestBranchId, setNearestBranchId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const { latitude: userLat, longitude: userLng } = pos.coords;
+      const haversine = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+        const R = 6371; // km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      };
+      const withDist = branches
+        .filter((b) => b.lat != null && b.lng != null)
+        .map((b) => ({ id: b.id, dist: haversine(userLat, userLng, b.lat!, b.lng!) }))
+        .sort((a, c) => a.dist - c.dist);
+      if (withDist.length > 0 && withDist[0].dist <= 20) {
+        setNearestBranchId(withDist[0].id);
+      }
+    }, () => { /* geolocation denied — no suggestion */ });
+  }, []);
 
   /* pay-now step (Fix 2) */
   const cfg = useConfig();
@@ -360,12 +419,17 @@ export default function BookingWizard() {
                     <button
                       key={b.id}
                       onClick={() => { setBranchId(b.id); setBarberId(null); }}
-                      className={`rounded-2xl border p-7 text-left transition-all ${
+                      className={`relative rounded-2xl border p-7 text-left transition-all ${
                         branchId === b.id
                           ? "border-gold bg-gold/8 shadow-[0_0_40px_-15px_rgba(201,162,39,0.5)]"
                           : "border-ivory/12 bg-coal hover:border-ivory/30"
                       }`}
                     >
+                      {nearestBranchId === b.id && (
+                        <span className="absolute top-4 right-4 rounded-full bg-gold/20 px-2.5 py-1 text-[10px] font-bold tracking-wider text-gold-2 uppercase">
+                          Nearest to you
+                        </span>
+                      )}
                       <p className="text-[11px] tracking-[0.28em] text-gold uppercase">{b.area}</p>
                       <h3 className="font-display mt-2 text-2xl text-ivory">{b.name}</h3>
                       <p className="mt-3 text-sm text-ivory/50">{b.address}</p>
@@ -471,13 +535,13 @@ export default function BookingWizard() {
                     </p>
                     <div className="mt-6 flex flex-wrap gap-3">
                       <Link
-                        href="/login?next=/book"
+                        href="/login?returnTo=/book"
                         className="btn-gold rounded-full px-7 py-3 text-sm tracking-wide"
                       >
                         Sign in
                       </Link>
                       <Link
-                        href="/login?next=/book"
+                        href="/login?returnTo=/book"
                         className="btn-ghost rounded-full px-7 py-3 text-sm tracking-wide"
                       >
                         Create an account
@@ -598,7 +662,11 @@ export default function BookingWizard() {
                 ) : (
                   <>
                     <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
-                      {slots.map((s) => (
+                      {slots.filter((s) => {
+                        /* Bug #3: hide slots that are already in the past for today */
+                        const slotTime = new Date(`${date}T${s.time}:00`).getTime();
+                        return slotTime > Date.now();
+                      }).map((s) => (
                         <button
                           key={s.time}
                           disabled={!s.available}

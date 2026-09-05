@@ -9,6 +9,8 @@ export type Branch = {
   address: string;
   hours: string;
   phone: string;
+  lat?: number;
+  lng?: number;
 };
 
 export type Service = {
@@ -62,6 +64,8 @@ export const branches: Branch[] = [
     address: "Marina Walk, Tower 4, Ground Floor",
     hours: "Daily 10:00 – 23:00",
     phone: "+971 4 000 0001",
+    lat: 25.0757,
+    lng: 55.1332,
   },
   {
     id: "b2",
@@ -70,6 +74,8 @@ export const branches: Branch[] = [
     address: "City Centre Boulevard, Unit 12",
     hours: "Daily 10:00 – 22:00",
     phone: "+971 4 000 0002",
+    lat: 25.2528,
+    lng: 55.3313,
   },
 ];
 

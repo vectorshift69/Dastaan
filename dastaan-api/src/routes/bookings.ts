@@ -458,7 +458,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
       await redeemCoupon(couponId, `invoice:${invoice.id}`, couponDiscount, owner0.client_id);
     }
 
-    await db.prepare("UPDATE bookings SET paid = 1, status = 'Started', updated_at = ? WHERE id = ?").run(now(), id);
+    await db.prepare("UPDATE bookings SET paid = 1, status = 'Confirmed', updated_at = ? WHERE id = ?").run(now(), id);
     await logEvent(id, s.sub, s.role, "checkout", `${invoice.invoiceNo} · AED ${invoice.total}`);
     await audit("checkout_completed", { actorId: s.sub, actorRole: s.role, detail: `${id} ${invoice.invoiceNo}`, ip: req.ip });
 

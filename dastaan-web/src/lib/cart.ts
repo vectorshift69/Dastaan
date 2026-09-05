@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export type CartLine = { productId: string; name: string; price: number; qty: number };
+export type CartLine = { productId: string; name: string; price: number; qty: number; image_url?: string };
 
 const KEY = "dastaan.cart.v1";
 const EVENT = "dastaan-cart-changed";

@@ -8,6 +8,12 @@
 /* archived timeline days. Every screen in the console has something    */
 /* real to show — nothing is an empty state.                            */
 /*                                                                      */
+/* It also writes a forward diary: today in full, then thirty days of   */
+/* upcoming appointments that thin out with distance. Those are only    */
+/* ever Booked or Confirmed and carry no money — a future visit has not */
+/* happened yet — and no barber is double-booked, so every row is one   */
+/* the API itself would have accepted.                                  */
+/*                                                                      */
 /* Deterministic for a given day: re-running it on the same date gives  */
 /* identical figures, so a demo can be rehearsed. Run it on a different */
 /* date and the totals shift a little, because the weekend pattern      */
@@ -59,6 +65,11 @@ const addMinutes = (date: string, hhmm: string, mins: number) => {
 };
 
 const HISTORY_DAYS = 42; // six trading weeks behind us
+
+/* Where the demo client's password-reset link should land. Set DEMO_EMAIL in
+   dastaan-api/.env to a real inbox you can open during a walkthrough; left
+   unset it stays on the reserved .test domain and cannot reach anyone. */
+const DEMO_EMAIL = process.env.DEMO_EMAIL || "demo@dastaan.test";
 
 /* ---------------- reference data ---------------- */
 
@@ -262,8 +273,16 @@ const run = async () => {
     /* Every demo client has an email, because without one they cannot be
        sent a password reset — and "reset a client's password" is the first
        thing an owner tries. .test is reserved by the IETF for exactly this,
-       so none of these can ever reach a real inbox by accident. */
-    clientRows.push([id, "client", userId, name, `${userId}@dastaan.test`, phone, pwd,
+       so none of these can ever reach a real inbox by accident.
+
+       The one exception is the `demo` account, which takes DEMO_EMAIL when it
+       is set, so that during a walkthrough the reset link actually lands in a
+       real inbox you can open in front of the client. It comes from the
+       environment rather than being written here because this repository is
+       public, and a personal address committed to a public repo is a spam
+       magnet within days. Put it in dastaan-api/.env, which is gitignored. */
+    clientRows.push([id, "client", userId, name,
+      userId === "demo" ? DEMO_EMAIL : `${userId}@dastaan.test`, phone, pwd,
       at(dayOffset(-HISTORY_DAYS - int(10, 240)), "12:00")]);
     const accId = uid();
     accountIds.set(id, accId);
@@ -594,14 +613,121 @@ const run = async () => {
       at(dayOffset(-int(1, 5)), "19:30"), now()]);
   }
 
-  for (const [ahead, barberId, userId, walkIdx, basket, slot] of upcoming) {
-    const clientRowId = userId ? clientIds.get(userId)! : null;
-    const name = userId ? clients.find(([u]) => u === userId)![1] : walkIns[walkIdx]![0];
-    const phone = userId ? clients.find(([u]) => u === userId)![2] : walkIns[walkIdx]![1];
-    const minutes = basket.reduce((m, s) => m + (serviceMinutes.get(s) ?? 45), 0);
-    todayRows.push([uid(), branchOfBarber(barberId), barberId, clientRowId, name, phone,
-      JSON.stringify(basket), at(dayOffset(ahead), slot), minutes, "Confirmed", 1, 0, now(), now()]);
+  /* ---------- the next 30 days ----------
+
+     A forward diary, not more history. Two rules make it believable rather
+     than merely present:
+
+     1. Nothing in the future has happened yet. Future appointments are only
+        ever Booked or Confirmed — never Arrived, Started, No Show or paid —
+        and they carry no invoice, no review and no loyalty points. Those are
+        things that happen on the day, and a seed that invents them produces
+        a database the application itself could never have written.
+
+     2. No barber is ever double-booked. The generator keeps the busy ranges
+        it has already placed and applies the same overlap test the API uses,
+        so every row here is a booking the API would have accepted. Without
+        this a 120-minute ritual at 15:15 quietly swallows the 16:00 slot and
+        the calendar draws two cards on top of each other.
+
+     The diary also thins out with distance, because a real one does: next
+     week is nearly full, the fourth week is a handful of early birds. */
+  const FUTURE_DAYS = 30;
+  const minuteOf = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
+  type Range = { from: number; to: number };
+  const busyBy = new Map<string, Range[]>(); // `${barberId}:${date}` -> ranges
+  const isFree = (key: string, from: number, minutes: number) =>
+    !(busyBy.get(key) ?? []).some((b) => from < b.to && b.from < from + minutes);
+  const hold = (key: string, from: number, minutes: number) => {
+    const list = busyBy.get(key) ?? [];
+    list.push({ from, to: from + minutes });
+    busyBy.set(key, list);
+  };
+
+  /* Every registered client gets two or three appointments to look forward
+     to — enough that each of them has something in their own account, and no
+     more than that, because a man does not have twelve haircuts in a month.
+     Nine accounts cannot fill a forward book on their own; once this pool is
+     spent the rest are bookings reception took by name over the phone, which
+     is what the remainder of a real diary is anyway. */
+  const upcomingRegulars: Visitor[] = [];
+  for (const [userId, name, phone] of clients)
+    for (let k = 0; k < int(2, 3); k++)
+      upcomingRegulars.push({ clientRowId: clientIds.get(userId)!, name, phone });
+  for (let i = upcomingRegulars.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [upcomingRegulars[i], upcomingRegulars[j]] = [upcomingRegulars[j]!, upcomingRegulars[i]!];
   }
+  let regAt = 0;
+  const nextRegular = (): Visitor | null =>
+    regAt < upcomingRegulars.length ? upcomingRegulars[regAt++]! : null;
+
+  let futureCount = 0;
+  process.stdout.write(`Writing ${FUTURE_DAYS} days ahead `);
+  for (let ahead = 1; ahead <= FUTURE_DAYS; ahead++) {
+    if (ahead % 5 === 0) process.stdout.write("·");
+    const date = dayOffset(ahead);
+    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+    const busy = weekday === 5 || weekday === 6 || weekday === 0; // Fri–Sun in the UAE
+
+    /* how far ahead people have actually booked: a full week, a thinner
+       second and third, and only the committed regulars beyond that */
+    const reach = ahead <= 7 ? 1 : ahead <= 14 ? 0.6 : ahead <= 21 ? 0.35 : 0.18;
+
+    for (const branchId of ["b1", "b2"] as const) {
+      const base = branchId === "b1" ? (busy ? 9 : 6) : (busy ? 6 : 4);
+      const capacity = Math.max(0, Math.round(base * reach));
+      if (capacity === 0) continue;
+
+      /* the last two slots are 20:30 and 21:15 — City Centre shuts at 22:00,
+         so it never takes the late one */
+      const openSlots = branchId === "b2" ? SLOTS.slice(0, -1) : SLOTS;
+      const slots = [...openSlots].sort(() => rnd() - 0.5).slice(0, capacity);
+
+      for (const slot of slots) {
+        const barberId = pick(barbersOf[branchId]);
+        const basket = pick(baskets);
+        const minutes = basket.reduce((m, s) => m + (serviceMinutes.get(s) ?? 45), 0);
+        const key = `${barberId}:${date}`;
+        const from = minuteOf(slot);
+
+        /* the same test the API runs before it accepts a booking */
+        if (!isFree(key, from, minutes)) continue;
+        /* and nobody starts a service they cannot finish before closing */
+        const closes = branchId === "b1" ? 23 * 60 : 22 * 60;
+        if (from + minutes > closes) continue;
+        hold(key, from, minutes);
+
+        /* Who books ahead is not who walks in. The history pool is mostly
+           walk-ins, because that is who fills a salon day to day — but a
+           walk-in by definition does not book three weeks out. The forward
+           book leans on people with accounts, who are the ones using the
+           site, plus phone bookings reception takes by name. */
+        /* Who books ahead is not who walks in. The history pool is mostly
+           walk-ins, because that is who fills a salon day to day — but a
+           walk-in by definition does not book three weeks out. Take a
+           registered client while any are left, then fall back. */
+        const { clientRowId, name, phone } =
+          (chance(0.45) ? nextRegular() : null) ?? nextVisitor();
+        /* close in, the desk has already rung round to confirm; further out
+           it is still just a booking in the book */
+        const status = ahead <= 5 ? (chance(0.75) ? "Confirmed" : "Booked") : "Booked";
+        /* more of the forward book comes through the site than the old
+           history did — that is the point of having a website */
+        const online = chance(0.55) ? 1 : 0;
+        /* booked somewhere between today and a fortnight ago, never after
+           the appointment itself */
+        const createdAt = at(dayOffset(-int(0, Math.min(14, ahead + 3))), pick(["11:20", "14:05", "18:40", "20:10"]));
+
+        todayRows.push([uid(), branchId, barberId, clientRowId, name, phone,
+          JSON.stringify(basket), at(date, slot), minutes, status, online, 0,
+          createdAt, createdAt]);
+        futureCount++;
+      }
+    }
+  }
+  process.stdout.write(" done\n");
 
   await bulkInsert("bookings",
     ["id", "branch_id", "barber_id", "client_id", "client_name", "client_phone", "service_ids",
@@ -671,6 +797,7 @@ const run = async () => {
   console.log(
     `Seeded a demo-ready salon:\n` +
     `  · ${HISTORY_DAYS} days of history · ${invoiceCount} invoices · AED ${Math.round(Number(revenue.t)).toLocaleString()} revenue\n` +
+    `  · ${todays.length} appointments today · ${futureCount} booked over the next ${FUTURE_DAYS} days\n` +
     `  · ${reviewCount} ratings · ${clients.length} registered clients · 14 archived timeline days\n` +
     `  Owner 9999 · Reception 1111 (Marina) / 1212 (City Centre) · Barbers 2222 3333 4444 5555 6666 7777 6161 6262 6363\n` +
     `  Client login: demo / demo1234 (all demo clients share that password)\n` +

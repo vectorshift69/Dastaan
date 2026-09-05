@@ -20,8 +20,8 @@ function ClientLogin() {
   /* where to go after signing in — the booking page sends people here and
      expects them back. Relative paths only, so this can't be used to bounce
      someone off to another site. */
-  const raw = params.get("next") ?? "/book";
-  const next = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/book";
+  const raw = params.get("returnTo") ?? params.get("next") ?? "/";
+  const next = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
 
   const cfg = useConfig();
   const [mode, setMode] = useState<"signin" | "register">("signin");
@@ -226,7 +226,7 @@ function ClientLogin() {
           {cfg.auth.google && (
 
           <a
-            href={`/api/auth/google/start?next=${encodeURIComponent(next)}`}
+            href={`/api/auth/google/start?returnTo=${encodeURIComponent(next)}`}
             className="btn-ghost flex w-full items-center justify-center gap-3 rounded-full py-3 text-sm"
           >
             <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden>

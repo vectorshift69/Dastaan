@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCart } from "@/lib/cart";
 import { useConfig } from "@/lib/config";
 import { CURRENCY } from "@/lib/data";
@@ -21,8 +21,20 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   /* Everything is delivered — there is no collect-from-branch — so an
-     address is the one thing we always have to ask for. */
+     address is the one thing we always have to ask for. Pre-filled from
+     the user's saved profile when they're signed in. */
   const [address, setAddress] = useState("");
+
+  /* Bug #11: pre-fill address from user profile */
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.address && !address) setAddress(d.address);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Order has been created (unpaid) and is waiting on a card, or on the
      client choosing "pay on delivery" instead. */
@@ -129,7 +141,7 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
 
         {/* ---- payment (order placed, unpaid, waiting on a card or "pay on delivery") ---- */}
         {pendingOrder && !placed ? (
-          <div className="animate-fade-up flex flex-1 flex-col px-6 py-8">
+          <div className="animate-fade-up flex flex-1 flex-col overflow-y-auto px-6 py-8">
             <p className="text-sm text-ivory/55">{pendingOrder.orderNo}</p>
             <h3 className="font-display mt-1 text-2xl text-ivory">
               {CURRENCY} {pendingOrder.total.toFixed(2)}
@@ -193,7 +205,12 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               <div className="space-y-3">
                 {cart.lines.map((l) => (
                   <div key={l.productId} className="flex gap-4 rounded-2xl border border-ivory/10 bg-ink p-4">
-                    <div className="h-16 w-10 shrink-0 rounded-t-sm rounded-b-md bg-gradient-to-b from-coal-2 to-ink ring-1 ring-gold/25" />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={l.image_url ?? `https://placehold.co/80x80/1a1a1a/c9a227?text=${encodeURIComponent(l.name.split(" ")[0])}`}
+                      alt={l.name}
+                      className="h-16 w-10 shrink-0 rounded-md object-contain ring-1 ring-gold/25"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-ivory">{l.name}</p>
                       <p className="mt-0.5 text-xs text-ivory/45">{CURRENCY} {l.price} each</p>
@@ -283,8 +300,8 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               ) : (
                 <button
                   onClick={placeOrder}
-                  disabled={placing || address.trim().length < 10}
-                  title={address.trim().length < 10 ? "Add a delivery address first" : undefined}
+                  disabled={placing || address.trim().length < 5}
+                  title={address.trim().length < 5 ? "Add a delivery address first" : undefined}
                   className="btn-gold mt-4 w-full rounded-full py-3.5 text-sm tracking-widest uppercase disabled:opacity-50"
                 >
                   {placing ? "Placing…" : payments.online ? "Pay now" : "Place order"}

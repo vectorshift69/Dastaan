@@ -5,6 +5,58 @@ rather than merely written.
 
 ---
 
+## 2026-08-24 — a real inbox for the demo client
+
+`DEMO_EMAIL` in `dastaan-api/.env` sets the `demo` client's address, so a
+password reset opened during a walkthrough actually arrives somewhere you can
+show. Everyone else stays on `@dastaan.test`, which is IETF-reserved and cannot
+reach a real person.
+
+It reads from the environment rather than being written into the seed because
+**this repository is public**, and a personal address committed to a public
+repo is scraped for spam within days. `.env` is gitignored.
+
+---
+
+## 2026-08-24 — a forward diary: 30 days of upcoming appointments
+
+The seed wrote six weeks of history, today, and exactly nine hand-written
+bookings over the following three days. Beyond that the calendar was empty, so
+"next week" demoed as a blank grid.
+
+Now it generates thirty days ahead — 182 appointments on the last run. Two
+rules keep it honest rather than merely populated:
+
+**Nothing in the future has happened.** Future rows are only Booked or
+Confirmed, never Arrived, Started, No Show or paid, and they carry no invoice,
+no review and no loyalty points. A seed that invents those produces a database
+the application itself could never have written.
+
+**No barber is double-booked.** The generator holds the ranges it has already
+placed and applies the same overlap test the API uses, so every row is one the
+API would have accepted. Without it a 120-minute ritual at 15:15 quietly
+swallows the 16:00 slot and the calendar draws two cards on top of each other.
+It also refuses to start a service that cannot finish before the branch closes
+— Marina Walk at 23:00, City Centre at 22:00.
+
+The diary thins with distance because a real one does, and leans on registered
+clients because a walk-in does not book three weeks out — though each of the
+nine accounts is capped at two or three, since nine people cannot fill a
+forward book and nobody has twelve haircuts in a month. The rest are bookings
+reception took by name.
+
+```
+week 1 (1-7)      83  █████████████████████████████████████████
+week 2 (8-14)     51  █████████████████████████
+week 3 (15-21)    27  █████████████
+week 4 (22-30)    21  ██████████
+
+double-bookings 0 · running past closing 0 · marked paid 0
+every registered client has 2-5 upcoming · all 30 days populated
+```
+
+---
+
 ## 2026-08-24 — security fix: the shop manager could read the appointment book
 
 Found by clicking through the live site, which is exactly why it was worth

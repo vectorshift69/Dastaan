@@ -137,6 +137,7 @@ Or `docker compose up --build` from this folder.
 |---|---|
 | `/team` — staff console | `9999` owner · `1111` reception (Marina Walk) · `1212` reception (City Centre) · `2222`–`7777`, `6161`–`6363` barbers. The code alone signs you in. |
 | `/login` — clients | `demo` / `demo1234` (every demo client shares that password) |
+
 | `/shop` — online shop | `shop` / `shop1234` — **a demo password, change it on a real deployment** |
 
 Coupons: `WELCOME10`, `GROOM25`, and `SUMMER15` (expired, to show that state).
@@ -146,9 +147,18 @@ completed visits with invoices, ~150 clients with honest visit counts, loyalty
 balances carried over from Fresha, ratings on every barber, branch stock that
 has moved (two lines sit below their reorder point), a stocked online warehouse
 with one line low, store orders in every state, and a fortnight of archived
-timeline days. It is deterministic for a given day, so a demo can be rehearsed.
+timeline days.
 
-See [`DEPLOYMENT.md`](DEPLOYMENT.md) for hosting.
+It also writes a **forward diary**: today in full, then thirty days of upcoming
+appointments that thin out with distance — next week nearly full, the fourth
+week a handful. Those are only ever Booked or Confirmed and carry no money,
+because a future visit has not happened yet, and no barber is double-booked, so
+every row is one the API itself would have accepted.
+
+It is deterministic for a given day, so a demo can be rehearsed.
+
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for hosting, and
+[`docs/DEMO-RESET.md`](docs/DEMO-RESET.md) for the pre-demo runbook.
 
 ## Status
 

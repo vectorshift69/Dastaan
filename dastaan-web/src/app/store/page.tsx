@@ -9,12 +9,17 @@ import { CURRENCY } from "@/lib/data";
 
 type Product = {
   id: string; name: string; category: string; price: number;
+  image_url?: string;
   /* what the warehouse can actually ship — the storefront must respect it,
      otherwise a client fills a cart and only finds out at checkout */
   available: number;
 };
 
-/* Deterministic bottle art per product — no image assets needed */
+/* Fallback placeholder image when no real image is available */
+const placeholderFor = (name: string) =>
+  `https://placehold.co/400x400/1a1a1a/c9a227?text=${encodeURIComponent(name.split(" ").slice(0, 2).join("+"))}`;
+
+/* Deterministic bottle art per product — shown as overlay when no image */
 const TONES = ["#3a2f10", "#2f3a35", "#3a2a2a", "#2a2f3a", "#332a3a", "#3a352a"];
 const toneFor = (id: string) => TONES[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % TONES.length];
 
@@ -41,7 +46,7 @@ export default function StorePage() {
   const shown = category === "All" ? products : products.filter((p) => p.category === category);
 
   const addToCart = (p: Product) => {
-    cart.add({ productId: p.id, name: p.name, price: p.price });
+    cart.add({ productId: p.id, name: p.name, price: p.price, image_url: p.image_url ?? placeholderFor(p.name) });
     setJustAdded(p.id);
     setTimeout(() => setJustAdded((v) => (v === p.id ? null : v)), 1200);
   };
@@ -53,7 +58,7 @@ export default function StorePage() {
       {/* floating cart button */}
       <button
         onClick={() => setCartOpen(true)}
-        className="fixed right-5 bottom-5 z-40 flex items-center gap-3 rounded-full bg-gold px-5 py-3.5 font-bold text-ink shadow-panel transition-all hover:bg-gold-2 md:right-8 md:bottom-8"
+        className="fixed left-5 bottom-5 z-40 flex items-center gap-3 rounded-full bg-gold px-5 py-3.5 font-bold text-ink shadow-panel transition-all hover:bg-gold-2 md:left-8 md:bottom-8"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M6 6h15l-1.5 9h-12L5 3H2" strokeLinecap="round" strokeLinejoin="round" />
@@ -112,26 +117,25 @@ export default function StorePage() {
                     soldOut ? "border-ivory/8 opacity-55" : "border-ivory/10 hover:border-gold/40"
                   }`}
                 >
-                  {/* bottle */}
-                  <div className="relative flex h-44 items-end justify-center overflow-hidden bg-gradient-to-b from-coal-2 to-ink">
+                  {/* product image */}
+                  <div className="relative flex h-44 items-center justify-center overflow-hidden bg-gradient-to-b from-coal-2 to-ink">
                     <div className="absolute -top-10 h-32 w-32 rounded-full bg-gold/5 blur-2xl transition-all group-hover:bg-gold/10" />
                     {soldOut && (
-                      <span className="absolute top-3 right-3 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-bold tracking-wider text-ivory/70 uppercase">
+                      <span className="absolute top-3 right-3 z-10 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-bold tracking-wider text-ivory/70 uppercase">
                         Sold out
                       </span>
                     )}
                     {scarce && (
-                      <span className="absolute top-3 right-3 rounded-full bg-gold/15 px-2.5 py-1 text-[10px] font-bold tracking-wider text-gold-2 uppercase">
+                      <span className="absolute top-3 right-3 z-10 rounded-full bg-gold/15 px-2.5 py-1 text-[10px] font-bold tracking-wider text-gold-2 uppercase">
                         {p.available} left
                       </span>
                     )}
-                    <div
-                      className="relative mb-6 h-28 w-14 rounded-t-md rounded-b-lg ring-1 ring-gold/30 transition-transform duration-500 group-hover:-translate-y-1"
-                      style={{ background: `linear-gradient(160deg, ${toneFor(p.id)} 0%, #101010 85%)` }}
-                    >
-                      <div className="mx-auto mt-3 h-6 w-8 rounded-sm bg-gold/25" />
-                      <div className="mx-auto mt-8 h-px w-8 bg-gold/40" />
-                    </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.image_url ?? placeholderFor(p.name)}
+                      alt={p.name}
+                      className="h-36 w-36 object-contain transition-transform duration-500 group-hover:-translate-y-1"
+                    />
                   </div>
 
                   <div className="flex flex-1 flex-col p-4">
