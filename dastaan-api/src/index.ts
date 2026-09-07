@@ -22,6 +22,7 @@ import storeRoutes from "./routes/store.js";
 import reviewRoutes from "./routes/reviews.js";
 import clientRoutes from "./routes/clients.js";
 import paymentRoutes from "./routes/payments.js";
+import trainingRoutes from "./routes/training.js";
 import { startScheduler } from "./notify/service.js";
 
 const app = Fastify({
@@ -114,6 +115,7 @@ await app.register(storeRoutes);
 await app.register(reviewRoutes);
 await app.register(clientRoutes);
 await app.register(paymentRoutes, { prefix: "/payments" });
+await app.register(trainingRoutes);
 
 await startScheduler(); // delivers queued SMS (confirmations, 2h reminders, feedback)
 

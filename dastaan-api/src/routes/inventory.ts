@@ -62,7 +62,7 @@ export default async function inventoryRoutes(app: FastifyInstance) {
     const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
     return await db.prepare(
-      "SELECT id, name, sku, category, kind, price, active FROM products ORDER BY kind, category, name"
+      "SELECT id, name, sku, category, kind, price, active, image_url AS "imageUrl" FROM products ORDER BY kind, category, name"
     ).all();
   });
 

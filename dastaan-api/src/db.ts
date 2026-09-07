@@ -194,6 +194,8 @@ export async function bulkInsert(
 
 /* Every table the app owns, child-first — used by the seed's --reset. */
 export const APP_TABLES = [
+  "quote_views", "motivational_quotes",
+  "training_progress", "training_videos",
   "payment_reconciliation_needed", "webhook_events", "payments",
   "points_transactions", "loyalty_accounts", "day_snapshots", "reviews", "orders",
   "coupon_redemptions", "coupons", "online_stock_movements", "online_stock",
@@ -700,6 +702,64 @@ export async function migrate() {
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS split_detail   TEXT;
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_wallet REAL;
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_tip    REAL;
+
+    /* ---- mandatory training videos ----
+       Admin uploads a video URL + deadline. Staff must watch the full video
+       (enforced client-side by the player; server records completion).
+       After the deadline, unfinished staff are suspended from new bookings. */
+    CREATE TABLE IF NOT EXISTS training_videos (
+      id          TEXT PRIMARY KEY,
+      title       TEXT NOT NULL,
+      description TEXT,
+      video_url   TEXT NOT NULL,
+      deadline    TEXT NOT NULL,
+      created_by  TEXT REFERENCES users(id),
+      created_at  TEXT NOT NULL,
+      active      INTEGER NOT NULL DEFAULT 1
+    );
+
+    /* One row per (video, user) pair — upserted as the player reports progress. */
+    CREATE TABLE IF NOT EXISTS training_progress (
+      id               TEXT PRIMARY KEY,
+      video_id         TEXT NOT NULL REFERENCES training_videos(id) ON DELETE CASCADE,
+      user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      progress_seconds INTEGER NOT NULL DEFAULT 0,
+      duration_seconds INTEGER,
+      completed        INTEGER NOT NULL DEFAULT 0,
+      completed_at     TEXT,
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      UNIQUE (video_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_progress_user ON training_progress (user_id);
+
+    /* ---- motivational quotes ----
+       Admin adds quotes; staff see one random quote per day as a mandatory
+       15-second popup on login. quote_views tracks what each user saw today
+       so refreshing the page shows the same quote, not a different one. */
+    CREATE TABLE IF NOT EXISTS motivational_quotes (
+      id         TEXT PRIMARY KEY,
+      quote      TEXT NOT NULL,
+      author     TEXT,
+      active     INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS quote_views (
+      id          TEXT PRIMARY KEY,
+      quote_id    TEXT NOT NULL REFERENCES motivational_quotes(id),
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      viewed_date TEXT NOT NULL,
+      UNIQUE (user_id, viewed_date)
+    );
+
+    /* ---- media columns ----
+       A URL pointing to a photo/image in cloud storage (Supabase Storage or
+       Cloudflare R2). The app never stores the file itself — only the public URL.
+       Null means no photo has been uploaded yet; the UI falls back to initials. */
+    ALTER TABLE users    ADD COLUMN IF NOT EXISTS photo_url TEXT;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;
   `);
 }
 

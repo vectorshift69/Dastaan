@@ -53,6 +53,7 @@ export default async function storeRoutes(app: FastifyInstance) {
        the chair, and the website cannot see or sell them. */
     return await db.prepare(
       `SELECT p.id, p.name, p.category, p.price,
+              p.image_url AS "imageUrl",
               GREATEST(0, COALESCE(o.qty, 0) - COALESCE(o.reserved, 0)) AS available
        FROM products p LEFT JOIN online_stock o ON o.product_id = p.id
        WHERE p.kind = 'retail' AND p.active = 1

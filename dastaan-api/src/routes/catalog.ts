@@ -20,17 +20,19 @@ export default async function catalogRoutes(app: FastifyInstance) {
   );
 
   app.get("/services", async () =>
-    await db.prepare("SELECT id, name, minutes, price, category FROM services WHERE active = 1").all()
+    await db.prepare("SELECT id, name, minutes, price, category FROM services WHERE active = 1 ORDER BY category, name").all()
   );
 
   app.get("/barbers", async (req) => {
     const q = req.query as { branchId?: string };
     const rows = q.branchId
       ? await db.prepare(
-          `SELECT id, name, title, branch_id AS "branchId" FROM users WHERE role = 'barber' AND active = 1 AND branch_id = ?`
+          `SELECT id, name, title, branch_id AS "branchId", photo_url AS "photoUrl"
+           FROM users WHERE role = 'barber' AND active = 1 AND branch_id = ?`
         ).all(q.branchId)
       : await db.prepare(
-          `SELECT id, name, title, branch_id AS "branchId" FROM users WHERE role = 'barber' AND active = 1`
+          `SELECT id, name, title, branch_id AS "branchId", photo_url AS "photoUrl"
+           FROM users WHERE role = 'barber' AND active = 1`
         ).all();
     return rows;
   });
@@ -43,10 +45,12 @@ export default async function catalogRoutes(app: FastifyInstance) {
     const rows =
       s.role === "super_admin"
         ? await db.prepare(
-            `SELECT id, name, role, title, branch_id AS "branchId", active FROM users WHERE role != 'client'`
+            `SELECT id, name, role, title, branch_id AS "branchId", active, photo_url AS "photoUrl"
+             FROM users WHERE role != 'client'`
           ).all()
         : await db.prepare(
-            `SELECT id, name, role, title, branch_id AS "branchId", active FROM users WHERE role = 'barber' AND branch_id = ?`
+            `SELECT id, name, role, title, branch_id AS "branchId", active, photo_url AS "photoUrl"
+             FROM users WHERE role = 'barber' AND branch_id = ?`
           ).all(s.branchId);
     return rows; // note: code hashes are never selected, let alone returned
   });

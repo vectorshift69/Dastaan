@@ -10,6 +10,7 @@ import { earnPoints, loyaltyForClient } from "../loyalty.js";
 import { checkCoupon, redeemCoupon } from "../coupons.js";
 import { moveStock } from "./inventory.js";
 import { createReviewInvite } from "./reviews.js";
+import { isBarberSuspended } from "./training.js";
 
 const STATUSES = ["Booked", "Confirmed", "Arrived", "Started", "No Show", "Cancelled"] as const;
 
@@ -229,9 +230,14 @@ export default async function bookingRoutes(app: FastifyInstance) {
       .prepare("SELECT id, name FROM users WHERE branch_id = ? AND role = 'barber' AND active = 1 ORDER BY name")
       .all(q.branchId) as { id: string; name: string }[];
 
+    /* Filter out barbers suspended for overdue training — they cannot take
+       new bookings until they complete their mandatory videos. */
+    const suspendedFlags = await Promise.all(allBarbers.map((b) => isBarberSuspended(b.id)));
+    const activeBarbers = allBarbers.filter((_, i) => !suspendedFlags[i]);
+
     const wanted = q.barberId && q.barberId !== "any"
-      ? allBarbers.filter((b) => b.id === q.barberId)
-      : allBarbers;
+      ? activeBarbers.filter((b) => b.id === q.barberId)
+      : activeBarbers;
     if (wanted.length === 0) return reply.code(404).send({ error: "Unknown barber for this branch" });
 
     /* Fetch each barber's shift for this day-of-week.
@@ -387,6 +393,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
       if (await overlaps(barberId, body.startsAt, minutes))
         return reply.code(409).send({ error: "That time was just taken — pick another slot" });
     }
+
+    /* Refuse new bookings for a suspended barber. Existing bookings are
+       honoured (checked at checkout), but no new slots may be claimed. */
+    if (await isBarberSuspended(barberId))
+      return reply.code(409).send({ error: "That barber is unavailable — please choose another" });
 
     /* ---- who is this appointment for? ----
        A signed-in client books for themselves by default. If they tick

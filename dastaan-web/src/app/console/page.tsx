@@ -14,6 +14,7 @@ import OrdersView from "@/components/console/OrdersView";
 import ClientsView from "@/components/console/ClientsView";
 import Logo, { LogoMark } from "@/components/Logo";
 import MonthView from "@/components/console/MonthView";
+import { TrainingBanner } from "@/components/console/TrainingBanner";
 import { salonToday, relativeDay, prettyDate } from "@/lib/time";
 import {
   barbers,
@@ -217,6 +218,8 @@ export default function Console() {
 
       {/* ---------- main ---------- */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* overdue training banner — only shown when the logged-in user has pending videos */}
+        <TrainingBanner />
         {/* top bar */}
         <header className="flex flex-wrap items-center gap-3 border-b border-[#e2ddd0] bg-white px-5 py-3">
           {view === "calendar" ? (
@@ -400,6 +403,8 @@ export default function Console() {
 /* ------------------------------------------------------------------ */
 import { services as ALL_SERVICES } from "@/lib/data";
 
+type Slot = { time: string; available: boolean };
+
 function NewBookingModal({
   branchId, barbers, date, onClose, onCreated,
 }: {
@@ -411,19 +416,40 @@ function NewBookingModal({
 }) {
   const [barberId, setBarberId] = useState(barbers[0]?.id ?? "");
   const [serviceIds, setServiceIds] = useState<string[]>([]);
-  const [time, setTime] = useState("10:00");
+  const [time, setTime] = useState<string | null>(null);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
-  const branchServices = ALL_SERVICES; // all services available at any branch
-  const toggleService = (id: string) =>
+  const branchServices = ALL_SERVICES;
+  const toggleService = (id: string) => {
     setServiceIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+    setTime(null); // reset slot when services change
+  };
+
+  const totalMinutes = branchServices
+    .filter((s) => serviceIds.includes(s.id))
+    .reduce((sum, s) => sum + s.minutes, 0);
+
+  /* load availability whenever barber, services or date change */
+  useEffect(() => {
+    if (serviceIds.length === 0 || !barberId) { setSlots([]); return; }
+    setLoadingSlots(true);
+    setTime(null);
+    fetch(`/api/availability?branchId=${branchId}&barberId=${barberId}&date=${date}&minutes=${totalMinutes}`)
+      .then((r) => r.ok ? r.json() : { slots: [] })
+      .then((d) => setSlots(d.slots ?? []))
+      .catch(() => setSlots([]))
+      .finally(() => setLoadingSlots(false));
+  }, [barberId, serviceIds.join(","), date, branchId, totalMinutes]);
 
   const submit = async () => {
     if (!clientName.trim()) { setErr("Client name is required"); return; }
     if (serviceIds.length === 0) { setErr("Select at least one service"); return; }
+    if (!time) { setErr("Pick a time slot"); return; }
     setSaving(true); setErr(null);
     try {
       const res = await fetch("/api/bookings", {
@@ -441,10 +467,6 @@ function NewBookingModal({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setErr(data.error ?? "Booking failed"); setSaving(false); return; }
-      // build a minimal Appointment for optimistic UI
-      const minutes = branchServices
-        .filter((s) => serviceIds.includes(s.id))
-        .reduce((sum, s) => sum + s.minutes, 0);
       onCreated({
         id: data.id,
         barberId,
@@ -452,7 +474,7 @@ function NewBookingModal({
         phone: clientPhone.trim(),
         serviceIds,
         start: time,
-        minutes,
+        minutes: totalMinutes,
         status: "Booked",
         online: false,
         paid: false,
@@ -485,20 +507,50 @@ function NewBookingModal({
             </label>
           </div>
 
-          {/* barber + time */}
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-xs font-semibold text-charcoal/50">Barber</span>
-              <select value={barberId} onChange={(e) => setBarberId(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-black/12 bg-white px-3 py-2.5 text-sm outline-none focus:border-gold">
-                {barbers.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs font-semibold text-charcoal/50">Start time</span>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold" />
-            </label>
+          {/* barber */}
+          <label className="block">
+            <span className="text-xs font-semibold text-charcoal/50">Barber</span>
+            <select value={barberId} onChange={(e) => { setBarberId(e.target.value); setTime(null); }}
+              className="mt-1 w-full rounded-xl border border-black/12 bg-white px-3 py-2.5 text-sm outline-none focus:border-gold">
+              {barbers.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+
+          {/* time slots — same availability engine as the client wizard */}
+          <div>
+            <p className="text-xs font-semibold text-charcoal/50">
+              Available times {totalMinutes > 0 && `(${totalMinutes} min needed)`}
+            </p>
+            {serviceIds.length === 0 ? (
+              <p className="mt-2 text-xs text-charcoal/40">Select services first to see available slots</p>
+            ) : loadingSlots ? (
+              <p className="mt-2 text-xs text-charcoal/40">Loading slots…</p>
+            ) : slots.length === 0 ? (
+              <p className="mt-2 text-xs text-charcoal/40">No slots available — try another barber or date</p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {slots.filter((s) => {
+                  const slotTime = new Date(`${date}T${s.time}:00`).getTime();
+                  return slotTime > Date.now();
+                }).map((s) => (
+                  <button
+                    key={s.time}
+                    type="button"
+                    disabled={!s.available}
+                    onClick={() => setTime(s.time)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all ${
+                      !s.available
+                        ? "cursor-not-allowed border-black/8 text-charcoal/25 line-through"
+                        : time === s.time
+                          ? "border-ink bg-ink text-gold-2"
+                          : "border-black/15 hover:border-ink"
+                    }`}
+                  >
+                    {s.time}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* services */}

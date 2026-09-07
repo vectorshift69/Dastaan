@@ -110,6 +110,28 @@ const staff: [string, string, string, string, string, string][] = [
   ["br9", "Imran Sheikh", "Barber", "b2", "6262", "barber"],
   ["br6", "Hassan Adel", "Barber", "b2", "6363", "barber"],
 ];
+
+/* Photo URLs for staff — stored in the DB, shown in the console and booking
+   wizard.  Using DiceBear (free, no API key) seeded by name for consistent
+   avatars until real photos are uploaded to Supabase/R2 and these URLs are
+   replaced.  Format: https://api.dicebear.com/9.x/avataaars/svg?seed=NAME   */
+const dicebear = (name: string) =>
+  `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(name)}&backgroundColor=c9a227&clothingColor=3c3c3c`;
+
+const staffPhotos: Record<string, string> = {
+  own1: dicebear("Imtiaz Dastaan"),
+  st1:  dicebear("Aisha Rahman"),
+  st2:  dicebear("Noor Siddiqui"),
+  br1:  dicebear("Aqib Khan"),
+  br7:  dicebear("Bilal Ahmed"),
+  br3:  dicebear("Mouawia Majzoub"),
+  br8:  dicebear("Tariq Mehmood"),
+  br2:  dicebear("Ali Raza"),
+  br4:  dicebear("Azeem Aslam"),
+  br5:  dicebear("Yousuf Mirza"),
+  br9:  dicebear("Imran Sheikh"),
+  br6:  dicebear("Hassan Adel"),
+};
 const barbersOf: Record<"b1" | "b2", string[]> = {
   b1: ["br1", "br7", "br3", "br8", "br2", "br4"],
   b2: ["br5", "br9", "br6"],
@@ -180,16 +202,39 @@ const PAY_METHODS = ["card", "card", "card", "cash", "cash", "wallet"];
 
 /* ---------------- products ---------------- */
 
+/* Stable Unsplash photo IDs — these are free to use for demos and don't
+   require an API key. Replace with your own Supabase/R2 URLs after launch. */
+const PRODUCT_IMAGES: Record<string, string> = {
+  p1:  "https://images.unsplash.com/photo-1608248543803-ba4f8c70ae0b?w=480&q=80", // hair serum
+  p2:  "https://images.unsplash.com/photo-1622560480654-d96214fdc887?w=480&q=80", // pomade jar
+  p3:  "https://images.unsplash.com/photo-1626015365107-2e63e4bce2e9?w=480&q=80", // beard oil
+  p4:  "https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=480&q=80", // shampoo bottle
+  p5:  "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=480&q=80", // straight razor
+  p6:  "https://images.unsplash.com/photo-1570194065650-d99fb4cb6b8b?w=480&q=80", // shave kit
+  p7:  "https://images.unsplash.com/photo-1606813902660-2d95e5d3b0f3?w=480&q=80", // barbershop supplies
+  p8:  "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=480&q=80", // salon supplies
+  p9:  "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=480&q=80", // tools
+  p10: "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?w=480&q=80", // face wash
+  p11: "https://images.unsplash.com/photo-1599305445671-ac291c95aaa9?w=480&q=80", // moisturiser
+  p12: "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=480&q=80", // aftershave
+};
+
+/* [id, name, sku, category, kind, price] */
 const products: [string, string, string | null, string, "retail" | "supply", number][] = [
-  ["p1", "Argan Repair Serum", "DST-ARG-01", "Hair care", "retail", 120],
-  ["p2", "Matte Clay Pomade", "DST-POM-01", "Styling", "retail", 85],
-  ["p3", "Beard Elixir No. 4", "DST-BRD-04", "Beard care", "retail", 95],
-  ["p4", "Charcoal Daily Shampoo", "DST-SHP-02", "Hair care", "retail", 70],
-  ["p5", "Straight Razor Kit", "DST-RZR-01", "Tools", "retail", 240],
-  ["p6", "Pre-Shave Oil & Balm Set", "DST-SHV-01", "Shaving", "retail", 150],
-  ["p7", "Barbicide Concentrate", null, "Sanitation", "supply", 0],
-  ["p8", "Neck Strips (box)", null, "Consumables", "supply", 0],
-  ["p9", "Clipper Blade Oil", null, "Tools", "supply", 0],
+  /* ---- Retail (sold to clients) ---- */
+  ["p1",  "Argan Repair Serum",       "DST-ARG-01",  "Hair care",    "retail", 120],
+  ["p2",  "Matte Clay Pomade",         "DST-POM-01",  "Styling",      "retail",  85],
+  ["p3",  "Beard Elixir No. 4",        "DST-BRD-04",  "Beard care",   "retail",  95],
+  ["p4",  "Charcoal Daily Shampoo",    "DST-SHP-02",  "Hair care",    "retail",  70],
+  ["p5",  "Straight Razor Kit",        "DST-RZR-01",  "Tools",        "retail", 240],
+  ["p6",  "Pre-Shave Oil & Balm Set",  "DST-SHV-01",  "Shaving",      "retail", 150],
+  ["p10", "Deep Cleanse Face Wash",    "DST-FCW-01",  "Skin care",    "retail",  65],
+  ["p11", "Hydrating Beard Balm",      "DST-BLM-02",  "Beard care",   "retail",  80],
+  ["p12", "Classic Aftershave Balm",   "DST-AFT-01",  "Shaving",      "retail",  75],
+  /* ---- Supply (back-of-house only) ---- */
+  ["p7",  "Barbicide Concentrate",     null,           "Sanitation",   "supply",   0],
+  ["p8",  "Neck Strips (box)",         null,           "Consumables",  "supply",   0],
+  ["p9",  "Clipper Blade Oil",         null,           "Tools",        "supply",   0],
 ];
 const retail = products.filter((p) => p[4] === "retail");
 const productPrice = new Map(products.map((p) => [p[0], p[5]]));
@@ -198,15 +243,18 @@ const productName = new Map(products.map((p) => [p[0], p[1]]));
 /* opening stock per branch — p4 at Marina and p8 at City Centre sit below
    their reorder point, so the Inventory screen has a real warning on it  */
 const openingStock: [string, string, number, number][] = [
-  ["p1", "b1", 18, 6], ["p1", "b2", 11, 6],
-  ["p2", "b1", 24, 8], ["p2", "b2", 15, 8],
-  ["p3", "b1", 16, 6], ["p3", "b2", 9, 6],
-  ["p4", "b1", 3, 8], ["p4", "b2", 12, 8],
-  ["p5", "b1", 5, 2], ["p5", "b2", 4, 2],
-  ["p6", "b1", 10, 4], ["p6", "b2", 7, 4],
-  ["p7", "b1", 14, 4], ["p7", "b2", 10, 4],
-  ["p8", "b1", 9, 5], ["p8", "b2", 2, 5],
-  ["p9", "b1", 12, 4], ["p9", "b2", 8, 4],
+  ["p1",  "b1", 18, 6], ["p1",  "b2", 11, 6],
+  ["p2",  "b1", 24, 8], ["p2",  "b2", 15, 8],
+  ["p3",  "b1", 16, 6], ["p3",  "b2",  9, 6],
+  ["p4",  "b1",  3, 8], ["p4",  "b2", 12, 8], // p4@b1 below reorder — shows warning
+  ["p5",  "b1",  5, 2], ["p5",  "b2",  4, 2],
+  ["p6",  "b1", 10, 4], ["p6",  "b2",  7, 4],
+  ["p7",  "b1", 14, 4], ["p7",  "b2", 10, 4],
+  ["p8",  "b1",  9, 5], ["p8",  "b2",  2, 5], // p8@b2 below reorder — shows warning
+  ["p9",  "b1", 12, 4], ["p9",  "b2",  8, 4],
+  ["p10", "b1", 20, 6], ["p10", "b2", 14, 6],
+  ["p11", "b1", 18, 5], ["p11", "b2", 11, 5],
+  ["p12", "b1", 15, 5], ["p12", "b2",  9, 5],
 ];
 
 /* ------------------------------------------------------------------ */
@@ -235,10 +283,12 @@ const run = async () => {
 
   await bulkInsert("branches", ["id", "name", "area", "address", "hours", "phone"], branches);
   await bulkInsert("services", ["id", "name", "minutes", "price", "category"], services.map((x) => [...x]));
-  await bulkInsert("users", ["id", "role", "name", "title", "branch_id", "code_hmac", "created_at"],
-    staff.map(([id, name, title, branch, code, role]) => [id, role, name, title, branch, hmacCode(code), now()]));
-  await bulkInsert("products", ["id", "name", "sku", "category", "kind", "price", "created_at"],
-    products.map(([id, name, sku, category, kind, price]) => [id, name, sku, category, kind, price, now()]));
+  await bulkInsert("users", ["id", "role", "name", "title", "branch_id", "code_hmac", "photo_url", "created_at"],
+    staff.map(([id, name, title, branch, code, role]) =>
+      [id, role, name, title, branch, hmacCode(code), staffPhotos[id] ?? null, now()]));
+  await bulkInsert("products", ["id", "name", "sku", "category", "kind", "price", "image_url", "created_at"],
+    products.map(([id, name, sku, category, kind, price]) =>
+      [id, name, sku, category, kind, price, PRODUCT_IMAGES[id] ?? null, now()]));
   /* Branch stock: what was counted on the shelf at each location. The online
      shop's warehouse is seeded separately below — different stock entirely. */
   await bulkInsert("stock_levels", ["product_id", "branch_id", "qty", "reorder_at"],
@@ -544,7 +594,8 @@ const run = async () => {
      show on the shop manager's screen. */
   const onlineOpening: [string, number, number][] = [
     ["p1", 46, 12], ["p2", 60, 15], ["p3", 38, 10],
-    ["p4", 28, 8], ["p5", 14, 4], ["p6", 7, 10],
+    ["p4", 28,  8], ["p5", 14,  4], ["p6",  7, 10],
+    ["p10", 35, 8], ["p11", 42, 10], ["p12", 30, 8],
   ];
   await bulkInsert("online_stock", ["product_id", "qty", "reserved", "reorder_at", "updated_at"],
     onlineOpening.map(([pid, qty, reorder]) => [pid, qty, 0, reorder, at(dayOffset(-HISTORY_DAYS), "09:30")]));

@@ -57,7 +57,7 @@ export default function AppointmentPanel({
     return Math.round((price * tipPct) / 100 * 100) / 100;
   }, [tipPct, customTip, price]);
 
-  const [invoice, setInvoice] = useState<{ invoiceNo: string; vat?: number } | null>(null);
+  const [invoice, setInvoice] = useState<{ invoiceNo: string; vat?: number; stripeRef?: string } | null>(null);
   const [paying, setPaying] = useState(false);
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
@@ -599,18 +599,18 @@ export default function AppointmentPanel({
                 </p>
               )}
               <p className="mt-1 text-xs text-charcoal/50">
-                Generated automatically and sent to {appt.client.split(" ")[0]} by SMS.
+                Generated automatically and sent to {appt.client.split(" ")[0] ?? appt.client} by SMS.
               </p>
-              {invoice && "stripeRef" in invoice && invoice.stripeRef && (
+              {invoice?.stripeRef && (
                 <p className="mt-2 border-t border-black/8 pt-2 text-[11px] text-charcoal/50">
                   Stripe ref:{" "}
                   <a
-                    href={`https://dashboard.stripe.com/payments/${invoice.stripeRef}`}
+                    href={`https://dashboard.stripe.com/payments/${invoice?.stripeRef}`}
                     target="_blank"
                     rel="noreferrer"
                     className="font-mono font-semibold text-charcoal/70 underline"
                   >
-                    {invoice.stripeRef}
+                    {String(invoice.stripeRef)}
                   </a>
                 </p>
               )}
