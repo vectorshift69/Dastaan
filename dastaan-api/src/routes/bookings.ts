@@ -209,43 +209,131 @@ export default async function bookingRoutes(app: FastifyInstance) {
       | { hours: string } | undefined;
     if (!branch) return reply.code(404).send({ error: "Unknown branch" });
 
-    /* Trading hours come from the branch record, e.g. "Daily 10:00 – 23:00". */
+    /* Branch trading hours — used as the outer bound and for "any" fallback. */
     const hrs = branch.hours.match(/(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
-    const openMin = hrs ? Number(hrs[1]) * 60 + Number(hrs[2]) : 10 * 60;
-    const closeMin = hrs ? Number(hrs[3]) * 60 + Number(hrs[4]) : 22 * 60;
+    const branchOpenMin  = hrs ? Number(hrs[1]) * 60 + Number(hrs[2]) : 10 * 60;
+    const branchCloseMin = hrs ? Number(hrs[3]) * 60 + Number(hrs[4]) : 22 * 60;
 
-    const barbers = await db
+    /* day_of_week for the requested date (0=Sun … 6=Sat, JS convention) */
+    const dow = new Date(q.date + "T12:00:00Z").getUTCDay();
+
+    const allBarbers = await db
       .prepare("SELECT id, name FROM users WHERE branch_id = ? AND role = 'barber' AND active = 1 ORDER BY name")
       .all(q.branchId) as { id: string; name: string }[];
 
     const wanted = q.barberId && q.barberId !== "any"
-      ? barbers.filter((b) => b.id === q.barberId)
-      : barbers;
+      ? allBarbers.filter((b) => b.id === q.barberId)
+      : allBarbers;
     if (wanted.length === 0) return reply.code(404).send({ error: "Unknown barber for this branch" });
 
-    /* one lookup per chair, then every slot is answered from memory */
+    /* Fetch each barber's shift for this day-of-week.
+       No row → barber is off that day (shift window = empty). */
+    type ShiftRow = { barber_id: string; shift_start: string; shift_end: string };
+    const shiftRows = wanted.length === 0 ? [] : await db
+      .prepare(
+        `SELECT barber_id, shift_start, shift_end FROM barber_schedules
+         WHERE barber_id IN (${wanted.map(() => "?").join(",")})
+           AND day_of_week = ?`
+      )
+      .all(...wanted.map((b) => b.id), dow) as ShiftRow[];
+
+    const shiftMap = new Map<string, { from: number; to: number }>();
+    for (const row of shiftRows) {
+      const [sh, sm] = row.shift_start.split(":").map(Number);
+      const [eh, em] = row.shift_end.split(":").map(Number);
+      shiftMap.set(row.barber_id, { from: sh! * 60 + sm!, to: eh! * 60 + em! });
+    }
+
+    /* one busy-range lookup per chair */
     const busyByBarber = new Map<string, Busy[]>();
     for (const b of wanted) busyByBarber.set(b.id, await busyRanges(b.id, q.date));
 
+    /* Overall window: union of all working barbers' shifts, clamped to branch hours. */
+    let windowOpen  = branchCloseMin;
+    let windowClose = branchOpenMin;
+    for (const b of wanted) {
+      const s = shiftMap.get(b.id);
+      if (!s) continue; // off today
+      if (s.from < windowOpen)  windowOpen  = s.from;
+      if (s.to   > windowClose) windowClose = s.to;
+    }
+    /* If no barber has a schedule row yet, fall back to branch hours so the
+       wizard still works before shifts are configured. */
+    if (windowOpen >= windowClose) {
+      windowOpen  = branchOpenMin;
+      windowClose = branchCloseMin;
+    }
+
     const STEP = 15; // quarter-hour grid
     const slots: { time: string; available: boolean }[] = [];
-    for (let m = openMin; m + minutes <= closeMin; m += STEP) {
-      const free = wanted.some((b) => !clashes(busyByBarber.get(b.id)!, m, minutes));
+
+    for (let m = windowOpen; m + minutes <= windowClose; m += STEP) {
+      /* A barber can take this slot only if:
+           1. their shift covers [m, m+minutes)  — they are working at that hour
+           2. their chair is free for that window */
+      const free = wanted.some((b) => {
+        const shift = shiftMap.get(b.id);
+        /* If the barber has no shift row at all (schedules not yet configured)
+           treat them as available for the whole branch window — graceful fallback. */
+        const shiftCovers = !shift
+          ? (m >= branchOpenMin && m + minutes <= branchCloseMin)
+          : (m >= shift.from && m + minutes <= shift.to);
+        return shiftCovers && !clashes(busyByBarber.get(b.id)!, m, minutes);
+      });
       slots.push({
         time: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
         available: free,
       });
     }
 
+    const fmt = (min: number) =>
+      `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+
     return {
       date: q.date,
       branchId: q.branchId,
       barberId: q.barberId ?? "any",
       minutes,
-      opens: `${String(Math.floor(openMin / 60)).padStart(2, "0")}:${String(openMin % 60).padStart(2, "0")}`,
-      closes: `${String(Math.floor(closeMin / 60)).padStart(2, "0")}:${String(closeMin % 60).padStart(2, "0")}`,
+      opens:  fmt(windowOpen),
+      closes: fmt(windowClose),
       slots,
     };
+  });
+
+  /* ---- GET barber schedule ---- */
+  app.get("/barbers/:barberId/schedule", async (req, reply) => {
+    const { barberId } = req.params as { barberId: string };
+    const rows = await db
+      .prepare("SELECT day_of_week, shift_start, shift_end FROM barber_schedules WHERE barber_id = ? ORDER BY day_of_week")
+      .all(barberId) as { day_of_week: number; shift_start: string; shift_end: string }[];
+    return { barberId, schedule: rows };
+  });
+
+  /* ---- PUT barber schedule (admin / barber themselves) ---- */
+  app.put("/barbers/:barberId/schedule", async (req, reply) => {
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
+    if (!s) return;
+    const { barberId } = req.params as { barberId: string };
+
+    const bodySchema = z.array(z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      shiftStart: z.string().regex(/^\d{2}:\d{2}$/),
+      shiftEnd:   z.string().regex(/^\d{2}:\d{2}$/),
+    }));
+    const parsed = bodySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid schedule" });
+
+    /* Replace all shifts for this barber atomically */
+    await db.transaction(async () => {
+      await db.prepare("DELETE FROM barber_schedules WHERE barber_id = ?").run(barberId);
+      for (const row of parsed.data) {
+        await db.prepare(
+          `INSERT INTO barber_schedules (id, barber_id, day_of_week, shift_start, shift_end)
+           VALUES (?, ?, ?, ?, ?)`
+        ).run(uid(), barberId, row.dayOfWeek, row.shiftStart, row.shiftEnd);
+      }
+    });
+    return { ok: true };
   });
 
   /* -------- create booking (client self-serve or staff) -------- */

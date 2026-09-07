@@ -671,6 +671,24 @@ export async function migrate() {
        invoices were all taken at the desk, so they default to settled. */
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS settled INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS settled_at TEXT;
+
+    /* ---- barber shift schedules ----
+       Each row says: on day_of_week (0=Sun … 6=Sat) this barber works
+       shift_start..shift_end.  No row for a given day means the barber is
+       off that day.  The availability endpoint uses these instead of branch
+       trading hours when a specific barber is requested.
+
+       When "any" barber is requested a slot is only offered if at least one
+       barber has a shift covering it AND has a free chair. */
+    CREATE TABLE IF NOT EXISTS barber_schedules (
+      id TEXT PRIMARY KEY,
+      barber_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      shift_start TEXT NOT NULL,   -- "HH:MM"  e.g. "10:00"
+      shift_end   TEXT NOT NULL,   -- "HH:MM"  e.g. "18:00"
+      UNIQUE (barber_id, day_of_week)
+    );
+    CREATE INDEX IF NOT EXISTS idx_barber_schedules ON barber_schedules (barber_id);
   `);
 }
 

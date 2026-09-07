@@ -556,6 +556,46 @@ const run = async () => {
   await db.prepare("UPDATE coupons SET uses = ? WHERE id = ?").run(couponUses.welcome, couponIds.welcome);
   await db.prepare("UPDATE coupons SET uses = ? WHERE id = ?").run(couponUses.ramadan, couponIds.ramadan);
 
+  /* ---------- barber shift schedules ----------
+     day_of_week: 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat  (JS getDay)
+     Dubai working pattern: Sun–Thu are business days; Fri–Sat weekend.
+     Two shifts per branch so the shop is covered all 13 opening hours:
+       Morning/midday crew  10:00–18:00
+       Afternoon/evening crew 14:00–23:00 (overlaps 2 h for the busy lunchtime)
+     Staff off-days are staggered so every day has at least 2 chairs per branch.
+     No row for a given (barber, day) = that barber is off. */
+  type ShiftDef = [barberId: string, dow: number, start: string, end: string];
+  const shiftDefs: ShiftDef[] = [
+    // ── b1 Marina Walk ──────────────────────────────────────────────────
+    // Aqib Khan br1 — Mon-Sat mornings; Sun off
+    ...[1,2,3,4,5,6].map(d => ["br1", d, "10:00", "18:00"] as ShiftDef),
+    // Bilal Ahmed br7 — Mon-Sat evenings; Sun off
+    ...[1,2,3,4,5,6].map(d => ["br7", d, "14:00", "23:00"] as ShiftDef),
+    // Mouawia Majzoub br3 — Sun-Thu mornings; Fri-Sat off
+    ...[0,1,2,3,4].map(d => ["br3", d, "10:00", "19:00"] as ShiftDef),
+    // Tariq Mehmood br8 — Sun-Thu evenings + Sat; Fri off
+    ...[0,1,2,3,4,6].map(d => ["br8", d, "15:00", "23:00"] as ShiftDef),
+    // Ali Raza br2 — Mon-Fri mornings + Sat full; Sun off
+    ...[1,2,3,4,5].map(d => ["br2", d, "10:00", "18:00"] as ShiftDef),
+    ["br2", 6, "10:00", "23:00"],
+    // Azeem Aslam br4 — Tue-Sat; Mon + Sun off
+    ...[2,3,4,5,6].map(d => ["br4", d, "11:00", "20:00"] as ShiftDef),
+
+    // ── b2 City Centre ───────────────────────────────────────────────────
+    // Yousuf Mirza br5 — Sun-Thu mornings; Fri-Sat off
+    ...[0,1,2,3,4].map(d => ["br5", d, "10:00", "18:00"] as ShiftDef),
+    // Imran Sheikh br9 — Mon-Sat evenings; Sun off
+    ...[1,2,3,4,5,6].map(d => ["br9", d, "14:00", "22:00"] as ShiftDef),
+    // Hassan Adel br6 — Mon-Fri mornings + Sat; Sun off
+    ...[1,2,3,4,5].map(d => ["br6", d, "10:00", "19:00"] as ShiftDef),
+    ["br6", 6, "10:00", "22:00"],
+  ];
+  await bulkInsert(
+    "barber_schedules",
+    ["id", "barber_id", "day_of_week", "shift_start", "shift_end"],
+    shiftDefs.map(([bid, dow, start, end]) => [uid(), bid, dow, start, end]),
+  );
+
   for (const [accId, pts] of points)
     await db.prepare("UPDATE loyalty_accounts SET points = ?, lifetime_points = ? WHERE id = ?").run(pts, pts, accId);
 
