@@ -689,6 +689,17 @@ export async function migrate() {
       UNIQUE (barber_id, day_of_week)
     );
     CREATE INDEX IF NOT EXISTS idx_barber_schedules ON barber_schedules (barber_id);
+
+    /* ---- invoice cash / split detail ----
+       Stored so the end-of-day cash reconciliation can see exactly how much
+       physical money changed hands versus how much went through the card reader.
+       split_detail is a JSON object, e.g. {"cash":150,"card":250}.
+       cash_received / cash_change record the client's note and the change given. */
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_received  REAL;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_change    REAL;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS split_detail   TEXT;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_wallet REAL;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_tip    REAL;
   `);
 }
 

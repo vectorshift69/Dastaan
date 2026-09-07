@@ -19,7 +19,7 @@ const METHODS = ["Card", "Cash", "QR code", "Gift card", "Split"] as const;
 /* shown only when Stripe Terminal is switched on for the whole app */
 const TERMINAL_METHOD = "Card (reader)";
 
-export type CheckoutResult = { invoiceNo: string; total: number; vat: number } | null;
+export type CheckoutResult = { invoiceNo: string; total: number; vat: number; stripeRef?: string } | null;
 type Product = { id: string; name: string; category: string; price: number };
 type ProductLine = { productId: string; name: string; price: number; qty: number };
 
@@ -35,6 +35,8 @@ export default function AppointmentPanel({
   onCheckout?: (args: {
     price: number; discount: number; tip: number; method: string;
     couponCode?: string; products?: { productId: string; qty: number }[];
+    cashReceived?: number; cashChange?: number; cashToTip?: number; cashToWallet?: number;
+    splitDetail?: { cash: number; card: number };
   }) => Promise<CheckoutResult>;
 }) {
   const [mode, setMode] = useState<"details" | "checkout" | "done">("details");
@@ -60,6 +62,12 @@ export default function AppointmentPanel({
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponErr, setCouponErr] = useState<string | null>(null);
+
+  /* split + cash state */
+  const [splitCash, setSplitCash] = useState("");
+  const [splitCard, setSplitCard] = useState("");
+  const [cashReceived, setCashReceived] = useState("");
+  const [cashAction, setCashAction] = useState<"tip" | "wallet" | null>(null);
 
   /* --- POS: retail products sold with the service (PRD 11) --- */
   const [catalog, setCatalog] = useState<Product[]>([]);
@@ -94,6 +102,12 @@ export default function AppointmentPanel({
   };
 
   const toPay = Math.max(0, price + productTotal - discount - (coupon?.discount ?? 0) + tip);
+  const cashReceivedNum = parseFloat(cashReceived) || 0;
+  const cashChange = method === "Cash" && cashReceivedNum > toPay
+    ? Math.round((cashReceivedNum - toPay) * 100) / 100
+    : 0;
+  const splitCashNum = parseFloat(splitCash) || 0;
+  const splitCardNum = parseFloat(splitCard) || 0;
 
   const applyCoupon = async () => {
     setCouponErr(null);
@@ -119,15 +133,24 @@ export default function AppointmentPanel({
 
   const complete = async () => {
     setPaying(true);
-    // the API creates the invoice + sends the SMS in one atomic step
     const result = onCheckout
       ? await onCheckout({
           price, discount, tip, method: method ?? "Cash", couponCode: coupon?.code,
           products: productLines.map((l) => ({ productId: l.productId, qty: l.qty })),
+          // cash tracking
+          cashReceived: method === "Cash" && cashReceivedNum > 0 ? cashReceivedNum : undefined,
+          cashChange: cashChange > 0 ? cashChange : undefined,
+          cashToTip: cashChange > 0 && cashAction === "tip" ? cashChange : undefined,
+          cashToWallet: cashChange > 0 && cashAction === "wallet" ? cashChange : undefined,
+          // split breakdown
+          splitDetail: method === "Split" && (splitCashNum > 0 || splitCardNum > 0)
+            ? { cash: splitCashNum, card: splitCardNum }
+            : undefined,
         }).catch(() => null)
       : null;
     setInvoice(result ?? { invoiceNo: `INV-DEMO-${appt.id.toUpperCase()}` });
-    onUpdate({ paid: true, status: "Started" });
+    /* the server sets status = Confirmed + paid = true; just update paid locally */
+    onUpdate({ paid: true });
     setPaying(false);
     setMode("done");
   };
@@ -447,6 +470,84 @@ export default function AppointmentPanel({
                   )}
                   {couponErr && <p className="mt-1.5 text-xs text-st-cancel">{couponErr}</p>}
                 </div>
+
+                {/* ── Split breakdown ── */}
+                {method === "Split" && (
+                  <div className="rounded-xl border border-black/10 p-4">
+                    <p className="text-xs font-bold tracking-wider text-charcoal/50 uppercase">Split breakdown</p>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-xs font-semibold text-charcoal/50">Cash ({CURRENCY})</span>
+                        <input
+                          inputMode="decimal"
+                          value={splitCash}
+                          onChange={(e) => setSplitCash(e.target.value.replace(/[^0-9.]/g, ""))}
+                          placeholder="0.00"
+                          className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold text-charcoal/50">Card ({CURRENCY})</span>
+                        <input
+                          inputMode="decimal"
+                          value={splitCard}
+                          onChange={(e) => setSplitCard(e.target.value.replace(/[^0-9.]/g, ""))}
+                          placeholder="0.00"
+                          className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold"
+                        />
+                      </label>
+                    </div>
+                    {(splitCashNum + splitCardNum) > 0 && (
+                      <p className={`mt-2 text-xs font-semibold ${Math.abs(splitCashNum + splitCardNum - toPay) < 0.01 ? "text-st-started" : "text-st-cancel"}`}>
+                        Total entered: {CURRENCY} {(splitCashNum + splitCardNum).toFixed(2)}
+                        {Math.abs(splitCashNum + splitCardNum - toPay) >= 0.01 && ` — expected ${CURRENCY} ${toPay.toFixed(2)}`}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Cash received + change ── */}
+                {method === "Cash" && (
+                  <div className="rounded-xl border border-black/10 p-4">
+                    <p className="text-xs font-bold tracking-wider text-charcoal/50 uppercase">Cash received</p>
+                    <input
+                      inputMode="decimal"
+                      value={cashReceived}
+                      onChange={(e) => { setCashReceived(e.target.value.replace(/[^0-9.]/g, "")); setCashAction(null); }}
+                      placeholder={`${toPay.toFixed(2)}`}
+                      className="mt-2 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold"
+                    />
+                    {cashChange > 0 && (
+                      <div className="mt-3">
+                        <p className="text-sm font-bold text-ink">
+                          Change due: {CURRENCY} {cashChange.toFixed(2)}
+                        </p>
+                        <p className="mt-1 text-xs text-charcoal/50">What should we do with the change?</p>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => setCashAction("tip")}
+                            className={`rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all ${cashAction === "tip" ? "border-ink bg-ink text-gold-2" : "border-black/12 hover:border-black/35"}`}
+                          >
+                            <p>Tip to barber</p>
+                            <p className={`font-normal ${cashAction === "tip" ? "text-white/60" : "text-charcoal/45"}`}>
+                              +{CURRENCY} {cashChange.toFixed(2)} tip
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => setCashAction("wallet")}
+                            className={`rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all ${cashAction === "wallet" ? "border-ink bg-ink text-gold-2" : "border-black/12 hover:border-black/35"}`}
+                          >
+                            <p>Add to wallet</p>
+                            <p className={`font-normal ${cashAction === "wallet" ? "text-white/60" : "text-charcoal/45"}`}>
+                              Credit {appt.client.split(" ")[0]}
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="rounded-xl bg-paper px-4 py-4 text-sm">
                   <Row k="Services" v={`${CURRENCY} ${price.toFixed(2)}`} />
                   {productLines.map((l) => (
@@ -455,6 +556,10 @@ export default function AppointmentPanel({
                   {discount > 0 && <Row k="Discount" v={`− ${CURRENCY} ${discount.toFixed(2)}`} />}
                   {coupon && <Row k={`Coupon ${coupon.code}`} v={`− ${CURRENCY} ${coupon.discount.toFixed(2)}`} />}
                   {tip > 0 && <Row k={`Tip${customTip === "" && tipPct ? ` (${tipPct}%)` : ""}`} v={`${CURRENCY} ${tip.toFixed(2)}`} />}
+                  {method === "Split" && splitCashNum > 0 && <Row k="  Cash portion" v={`${CURRENCY} ${splitCashNum.toFixed(2)}`} />}
+                  {method === "Split" && splitCardNum > 0 && <Row k="  Card portion" v={`${CURRENCY} ${splitCardNum.toFixed(2)}`} />}
+                  {method === "Cash" && cashReceivedNum > 0 && <Row k="Cash received" v={`${CURRENCY} ${cashReceivedNum.toFixed(2)}`} />}
+                  {cashChange > 0 && <Row k={`Change${cashAction === "tip" ? " (tipped)" : cashAction === "wallet" ? " (→ wallet)" : ""}`} v={`${CURRENCY} ${cashChange.toFixed(2)}`} />}
                   <Row k={`Paying by ${method ?? "—"}`} v="" />
                   <div className="my-2 h-px bg-black/10" />
                   <div className="flex items-center justify-between">
@@ -496,6 +601,29 @@ export default function AppointmentPanel({
               <p className="mt-1 text-xs text-charcoal/50">
                 Generated automatically and sent to {appt.client.split(" ")[0]} by SMS.
               </p>
+              {invoice && "stripeRef" in invoice && invoice.stripeRef && (
+                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] text-charcoal/50">
+                  Stripe ref:{" "}
+                  <a
+                    href={`https://dashboard.stripe.com/payments/${invoice.stripeRef}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono font-semibold text-charcoal/70 underline"
+                  >
+                    {invoice.stripeRef}
+                  </a>
+                </p>
+              )}
+              {cashAction === "wallet" && cashChange > 0 && (
+                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] font-semibold text-gold-dim">
+                  ◆ {CURRENCY} {cashChange.toFixed(2)} added to {appt.client.split(" ")[0]}&apos;s wallet
+                </p>
+              )}
+              {cashAction === "tip" && cashChange > 0 && (
+                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] text-charcoal/50">
+                  Tip of {CURRENCY} {cashChange.toFixed(2)} recorded for the barber
+                </p>
+              )}
             </div>
             {invoice && !invoice.invoiceNo.startsWith("INV-DEMO") && (
               <a
@@ -515,7 +643,7 @@ export default function AppointmentPanel({
       </div>
 
       {/* footer action */}
-      {mode === "details" && appt.status !== "Cancelled" && appt.status !== "No Show" && (
+      {mode === "details" && appt.status !== "Cancelled" && appt.status !== "No Show" && !appt.paid && (
         <div className="border-t border-[#eee9dd] px-6 py-4">
           <button
             onClick={() => setMode("checkout")}
@@ -524,6 +652,11 @@ export default function AppointmentPanel({
             Checkout · {CURRENCY} {apptTotal(appt)}
           </button>
           <p className="mt-2 text-center text-[11px] text-charcoal/45">Products can be added at checkout</p>
+        </div>
+      )}
+      {mode === "details" && appt.paid && (
+        <div className="border-t border-[#eee9dd] px-6 py-4">
+          <p className="text-center text-sm font-semibold text-st-started">● Paid — session complete</p>
         </div>
       )}
       {mode === "checkout" && (

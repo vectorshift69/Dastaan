@@ -21,6 +21,12 @@ export type InvoiceInput = {
   /* retail products sold alongside the service (PRD 11 combined checkout).
      Priced server-side from the catalog — never trusted from the client. */
   productLines?: { productId: string; name: string; qty: number; price: number }[];
+  /* cash / split tracking */
+  cashReceived?: number;   // cash note the client handed over
+  cashChange?: number;     // change given back
+  cashToWallet?: number;   // change added to client credit wallet
+  cashToTip?: number;      // change tipped to the barber
+  splitDetail?: { cash: number; card: number; [k: string]: number }; // breakdown for Split payments
 };
 
 export type Invoice = {
@@ -85,12 +91,18 @@ export async function createInvoiceForBooking(bookingId: string, input: InvoiceI
   const id = uid();
   await db.prepare(
     `INSERT INTO invoices (id, invoice_no, booking_id, branch_id, client_name, client_phone,
-       items, gross, discount, tip, vat, total, payment_method, issued_by, coupon_code, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       items, gross, discount, tip, vat, total, payment_method, issued_by, coupon_code, created_at,
+       cash_received, cash_change, cash_to_wallet, cash_to_tip, split_detail)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id, invoiceNo, b.id, b.branch_id, b.client_name, b.client_phone,
     JSON.stringify(items), gross, totalDiscount, r2(input.tip), vat, total,
-    input.method, input.issuedBy, input.couponCode ?? null, now()
+    input.method, input.issuedBy, input.couponCode ?? null, now(),
+    input.cashReceived ?? null,
+    input.cashChange ?? null,
+    input.cashToWallet ?? null,
+    input.cashToTip ?? null,
+    input.splitDetail ? JSON.stringify(input.splitDetail) : null,
   );
 
   return {

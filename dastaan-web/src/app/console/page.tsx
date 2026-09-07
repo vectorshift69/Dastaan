@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Calendar from "@/components/console/Calendar";
 import AppointmentPanel from "@/components/console/AppointmentPanel";
 import LoyaltyScan from "@/components/console/LoyaltyScan";
@@ -66,6 +67,13 @@ export default function Console() {
   const [live, setLive] = useState(false); // true once real API data loads
   const [me, setMe] = useState<{ id?: string; name: string; role: string } | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [newBookingOpen, setNewBookingOpen] = useState(false);
+  const router = useRouter();
+
+  const lockScreen = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    router.push("/team");
+  }, [router]);
   const [view, setView] = useState<View>("calendar");
   /* the day being looked at — the console used to be hardwired to today */
   const [date, setDate] = useState<string>(salonToday());
@@ -198,13 +206,13 @@ export default function Console() {
             {(me?.role ?? "preview").replace("_", " ")} · {branch.area}
           </p>
         </div>
-        <Link
-          href="/team"
+        <button
+          onClick={lockScreen}
           className="mt-3 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs text-ivory/40 transition-colors hover:text-st-cancel lg:justify-start lg:px-4"
         >
           <span>⏻</span>
           <span className="hidden lg:inline">Lock screen</span>
-        </Link>
+        </button>
       </nav>
 
       {/* ---------- main ---------- */}
@@ -289,7 +297,12 @@ export default function Console() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 12h10"/></svg>
                   Scan card
                 </button>
-                <button className="btn-gold rounded-full px-5 py-1.5 text-[13px]">+ New booking</button>
+                <button
+                  onClick={() => setNewBookingOpen(true)}
+                  className="btn-gold rounded-full px-5 py-1.5 text-[13px]"
+                >
+                  + New booking
+                </button>
               </>
             )}
           </div>
@@ -354,7 +367,7 @@ export default function Console() {
                           });
                           if (!res.ok) return null;
                           const inv = await res.json();
-                          return { invoiceNo: inv.invoiceNo, total: inv.total, vat: inv.vat };
+                          return { invoiceNo: inv.invoiceNo, total: inv.total, vat: inv.vat, stripeRef: inv.stripeRef };
                         }
                       : undefined
                   }
@@ -366,6 +379,159 @@ export default function Console() {
         )}
       </div>
       {scanOpen && <LoyaltyScan onClose={() => setScanOpen(false)} />}
+      {newBookingOpen && (
+        <NewBookingModal
+          branchId={branchId}
+          barbers={branchBarbers}
+          date={date}
+          onClose={() => setNewBookingOpen(false)}
+          onCreated={(appt) => {
+            setAppointments((prev) => [...prev, appt]);
+            setNewBookingOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Walk-in booking modal                                                */
+/* ------------------------------------------------------------------ */
+import { services as ALL_SERVICES } from "@/lib/data";
+
+function NewBookingModal({
+  branchId, barbers, date, onClose, onCreated,
+}: {
+  branchId: string;
+  barbers: typeof import("@/lib/data").barbers;
+  date: string;
+  onClose: () => void;
+  onCreated: (appt: Appointment) => void;
+}) {
+  const [barberId, setBarberId] = useState(barbers[0]?.id ?? "");
+  const [serviceIds, setServiceIds] = useState<string[]>([]);
+  const [time, setTime] = useState("10:00");
+  const [clientName, setClientName] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const branchServices = ALL_SERVICES; // all services available at any branch
+  const toggleService = (id: string) =>
+    setServiceIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+
+  const submit = async () => {
+    if (!clientName.trim()) { setErr("Client name is required"); return; }
+    if (serviceIds.length === 0) { setErr("Select at least one service"); return; }
+    setSaving(true); setErr(null);
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          branchId,
+          barberId,
+          serviceIds,
+          startsAt: `${date}T${time}:00`,
+          clientName: clientName.trim(),
+          clientPhone: clientPhone.trim() || undefined,
+          online: false,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setErr(data.error ?? "Booking failed"); setSaving(false); return; }
+      // build a minimal Appointment for optimistic UI
+      const minutes = branchServices
+        .filter((s) => serviceIds.includes(s.id))
+        .reduce((sum, s) => sum + s.minutes, 0);
+      onCreated({
+        id: data.id,
+        barberId,
+        client: clientName.trim(),
+        phone: clientPhone.trim(),
+        serviceIds,
+        start: time,
+        minutes,
+        status: "Booked",
+        online: false,
+        paid: false,
+      });
+    } catch { setErr("Network error — try again"); setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm">
+      <div className="animate-fade-up w-full max-w-md rounded-2xl bg-white p-7 shadow-panel">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-xl font-semibold text-ink">Walk-in booking</h2>
+          <button onClick={onClose} className="rounded-full p-1.5 text-charcoal/40 hover:bg-black/5 hover:text-ink">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round"/></svg>
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {/* client */}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs font-semibold text-charcoal/50">Client name *</span>
+              <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="e.g. Ahmed Al-Rashid"
+                className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold" />
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-charcoal/50">Phone (optional)</span>
+              <input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} placeholder="+971 50…"
+                className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold" />
+            </label>
+          </div>
+
+          {/* barber + time */}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs font-semibold text-charcoal/50">Barber</span>
+              <select value={barberId} onChange={(e) => setBarberId(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/12 bg-white px-3 py-2.5 text-sm outline-none focus:border-gold">
+                {barbers.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-charcoal/50">Start time</span>
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-black/12 px-3 py-2.5 text-sm outline-none focus:border-gold" />
+            </label>
+          </div>
+
+          {/* services */}
+          <div>
+            <p className="text-xs font-semibold text-charcoal/50">Services *</p>
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-black/10">
+              {branchServices.map((s) => (
+                <label key={s.id} className="flex cursor-pointer items-center justify-between border-b border-black/5 px-4 py-2.5 last:border-0 hover:bg-paper">
+                  <span className="flex items-center gap-3">
+                    <input type="checkbox" checked={serviceIds.includes(s.id)} onChange={() => toggleService(s.id)}
+                      className="accent-gold" />
+                    <span className="text-sm font-semibold text-ink">{s.name}</span>
+                    <span className="text-xs text-charcoal/45">{s.minutes} min</span>
+                  </span>
+                  <span className="text-sm font-bold text-ink">AED {s.price}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {err && <p className="rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{err}</p>}
+        </div>
+
+        <div className="mt-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 rounded-full border border-black/15 py-3 text-sm font-semibold text-charcoal/70 hover:border-black/40">
+            Cancel
+          </button>
+          <button onClick={submit} disabled={saving}
+            className="btn-gold flex-[2] rounded-full py-3 text-sm tracking-widest uppercase disabled:opacity-40">
+            {saving ? "Booking…" : "Book walk-in"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

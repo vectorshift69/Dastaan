@@ -48,13 +48,20 @@ const checkoutSchema = z.object({
     productId: z.string().min(1),
     qty: z.number().int().min(1).max(50),
   })).max(20).optional(),
+  // cash handling
+  cashReceived: z.number().min(0).optional(),
+  cashChange: z.number().min(0).optional(),
+  cashToWallet: z.number().min(0).optional(),
+  cashToTip: z.number().min(0).optional(),
+  // split breakdown (cash vs card vs other)
+  splitDetail: z.object({ cash: z.number().min(0), card: z.number().min(0) }).optional(),
 });
 
 type BookingRow = {
   id: string; branch_id: string; barber_id: string; client_id: string | null;
   client_name: string; client_phone: string | null; service_ids: string;
   starts_at: string; minutes: number; status: string; online: number; paid: number;
-  cancel_reason: string | null;
+  cancel_reason: string | null; payment_intent_id: string | null;
 };
 
 const toApi = async (b: BookingRow) => {
@@ -73,6 +80,7 @@ const toApi = async (b: BookingRow) => {
     paid: !!b.paid,
     cancelReason: b.cancel_reason ?? undefined,
     loyalty: loyalty ? { tier: loyalty.tier, points: loyalty.points } : undefined,
+    paymentIntentId: b.payment_intent_id ?? undefined,
   };
 };
 
@@ -534,6 +542,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
       couponCode: couponCode ? couponCode.toUpperCase() : null,
       couponDiscount,
       productLines,
+      cashReceived: parsed.data.cashReceived,
+      cashChange:   parsed.data.cashChange,
+      cashToWallet: parsed.data.cashToWallet,
+      cashToTip:    parsed.data.cashToTip,
+      splitDetail:  parsed.data.splitDetail,
     });
 
     // draw the sold products out of this branch's stock, logged as pos_sale
