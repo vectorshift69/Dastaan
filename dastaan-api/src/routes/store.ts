@@ -161,7 +161,7 @@ export default async function storeRoutes(app: FastifyInstance) {
 
   /* -------- admin: all orders with client name + email (SUPER ADMIN / ADMIN) -------- */
   app.get("/store/orders/admin", async (req, reply) => {
-    const s = await requireRole(req, reply, ["super_admin", "admin", "owner"]);
+    const s = await requireRole(req, reply, ["super_admin", "admin"]);
     if (!s) return;
     const rows = await db.prepare(`
       SELECT o.*, u.name AS client_name, u.email AS client_email
