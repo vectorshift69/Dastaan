@@ -10,6 +10,7 @@ import { z } from "zod";
 import { db, uid, now } from "../db.js";
 import { requireRole, audit } from "../security.js";
 import { loyaltyForClient } from "../loyalty.js";
+import { spendTierFor } from "../tiers.js";
 
 const updateSchema = z.object({
   name: z.string().min(2).max(80).optional(),
@@ -68,6 +69,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       key: r.id ?? `name:${encodeURIComponent(r.name)}`,
       registered: !!r.registered,
       loyalty: r.id ? await loyaltyForClient(r.id) : null,
+      spendTier: r.id ? await spendTierFor(r.id) : null,
     })));
   });
 
@@ -107,6 +109,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         userId: null,
         registered: false,
         loyalty: null,
+        spendTier: null,
         history: await withServiceNames(rows),
       };
     }
@@ -130,6 +133,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       ...user,
       registered: true,
       loyalty: await loyaltyForClient(id),
+      spendTier: await spendTierFor(id),
       history: await withServiceNames(history),
     };
   });

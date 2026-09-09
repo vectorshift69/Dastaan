@@ -3,17 +3,28 @@
 import { useCallback, useEffect, useState } from "react";
 import { CURRENCY } from "@/lib/data";
 
+type SpendTier = { tier: "Bronze" | "Silver" | "Gold" | "Platinum"; spend: number; nextTier: { name: string; at: number } | null };
+
 type ClientRow = {
   id: string | null; key: string; name: string; phone: string | null;
   visits: number; lastVisit: string | null; registered: boolean;
   loyalty: { tier: string; points: number } | null;
+  spendTier: SpendTier | null;
 };
 
 type Detail = {
   id: string; name: string; phone: string | null; userId: string | null;
   registered: boolean;
   loyalty: { tier: string; points: number; lifetimePoints: number } | null;
+  spendTier: SpendTier | null;
   history: { id: string; startsAt: string; status: string; paid: boolean; barber: string; services: string[] }[];
+};
+
+const TIER_COLOR: Record<SpendTier["tier"], string> = {
+  Bronze: "border-[#b08d57]/50 bg-[#b08d57]/10 text-[#8a6a3d]",
+  Silver: "border-[#9ea3ab]/50 bg-[#9ea3ab]/10 text-[#6b7078]",
+  Gold: "border-gold/50 bg-gold/10 text-gold-dim",
+  Platinum: "border-[#6b6fb8]/50 bg-[#6b6fb8]/10 text-[#4d5099]",
 };
 
 export default function ClientsView() {
@@ -97,6 +108,7 @@ export default function ClientsView() {
                 <th className="px-4 py-2.5">Client</th>
                 <th className="px-4 py-2.5 text-right">Visits</th>
                 <th className="px-4 py-2.5 text-right">Last visit</th>
+                <th className="px-4 py-2.5 text-right">Tier</th>
                 <th className="px-4 py-2.5 text-right">Loyalty</th>
               </tr>
             </thead>
@@ -119,6 +131,13 @@ export default function ClientsView() {
                     {c.lastVisit ? new Date(c.lastVisit).toLocaleDateString("en-AE", { day: "numeric", month: "short" }) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
+                    {c.spendTier ? (
+                      <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold tracking-wider uppercase ${TIER_COLOR[c.spendTier.tier]}`}>
+                        {c.spendTier.tier}
+                      </span>
+                    ) : <span className="text-charcoal/35">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
                     {c.loyalty ? (
                       <span className="rounded-full border border-gold/50 bg-gold/10 px-2.5 py-0.5 text-[10px] font-bold tracking-wider text-gold-dim uppercase">
                         ◆ {c.loyalty.tier} · {c.loyalty.points.toLocaleString()}
@@ -127,7 +146,7 @@ export default function ClientsView() {
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-charcoal/45">No clients found.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-charcoal/45">No clients found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -151,8 +170,24 @@ export default function ClientsView() {
             </button>
           </div>
 
+          {selected.spendTier && (
+            <div className="mt-4 flex items-center justify-between rounded-xl border border-black/8 bg-paper/60 px-4 py-3">
+              <div>
+                <p className="text-[10px] tracking-[0.2em] text-charcoal/45 uppercase">Spend tier</p>
+                <p className="mt-0.5 text-xs text-charcoal/55">
+                  {CURRENCY} {selected.spendTier.spend.toLocaleString()} lifetime
+                  {selected.spendTier.nextTier &&
+                    ` · ${CURRENCY} ${(selected.spendTier.nextTier.at - selected.spendTier.spend).toLocaleString()} to ${selected.spendTier.nextTier.name}`}
+                </p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wider uppercase ${TIER_COLOR[selected.spendTier.tier]}`}>
+                {selected.spendTier.tier}
+              </span>
+            </div>
+          )}
+
           {selected.loyalty && (
-            <div className="mt-4 rounded-xl bg-ink px-4 py-3">
+            <div className="mt-3 rounded-xl bg-ink px-4 py-3">
               <p className="text-[10px] tracking-[0.2em] text-ivory/45 uppercase">Loyalty</p>
               <p className="font-display mt-0.5 text-xl text-gold-2">
                 {selected.loyalty.points.toLocaleString()} pts · {selected.loyalty.tier}
