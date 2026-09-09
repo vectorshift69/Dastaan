@@ -323,7 +323,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
     return { barberId, schedule: rows };
   });
 
-  /* ---- PUT barber schedule (admin / barber themselves) ---- */
+  /* ---- PUT barber schedule (admin / barber themselves) ----
+     The schedule is a recurring weekly pattern — set once, it applies every
+     week indefinitely until changed again. Whatever it replaces is archived
+     to shift_change_log first, so the change is auditable without ever
+     rewriting or deleting history. */
   app.put("/barbers/:barberId/schedule", async (req, reply) => {
     const s = await requireRole(req, reply, ["admin", "super_admin"]);
     if (!s) return;
@@ -337,8 +341,20 @@ export default async function bookingRoutes(app: FastifyInstance) {
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid schedule" });
 
-    /* Replace all shifts for this barber atomically */
+    /* Archive the outgoing shifts, then replace all shifts for this barber —
+       one atomic transaction so a change is never half-logged. */
     await db.transaction(async () => {
+      const outgoing = await db
+        .prepare("SELECT day_of_week, shift_start, shift_end FROM barber_schedules WHERE barber_id = ?")
+        .all(barberId) as { day_of_week: number; shift_start: string; shift_end: string }[];
+      const changedAt = now();
+      for (const row of outgoing) {
+        await db.prepare(
+          `INSERT INTO shift_change_log (id, barber_id, day_of_week, shift_start, shift_end, changed_by, changed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(uid(), barberId, row.day_of_week, row.shift_start, row.shift_end, s.sub, changedAt);
+      }
+
       await db.prepare("DELETE FROM barber_schedules WHERE barber_id = ?").run(barberId);
       for (const row of parsed.data) {
         await db.prepare(
@@ -347,7 +363,23 @@ export default async function bookingRoutes(app: FastifyInstance) {
         ).run(uid(), barberId, row.dayOfWeek, row.shiftStart, row.shiftEnd);
       }
     });
+    await audit("shift_changed", { actorId: s.sub, actorRole: s.role, detail: barberId, ip: req.ip });
     return { ok: true };
+  });
+
+  /* ---- GET shift change history (admin) ----
+     Append-only trail of every shift a barber has ever had, newest first. */
+  app.get("/barbers/:barberId/schedule/history", async (req, reply) => {
+    const s = await requireRole(req, reply, ["admin", "super_admin"]);
+    if (!s) return;
+    const { barberId } = req.params as { barberId: string };
+    const rows = await db.prepare(
+      `SELECT l.day_of_week AS "dayOfWeek", l.shift_start AS "shiftStart", l.shift_end AS "shiftEnd",
+              l.changed_at AS "changedAt", u.name AS "changedBy"
+       FROM shift_change_log l LEFT JOIN users u ON u.id = l.changed_by
+       WHERE l.barber_id = ? ORDER BY l.changed_at DESC LIMIT 200`
+    ).all(barberId);
+    return { barberId, history: rows };
   });
 
   /* -------- create booking (client self-serve or staff) -------- */

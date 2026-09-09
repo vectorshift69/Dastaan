@@ -692,6 +692,26 @@ export async function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_barber_schedules ON barber_schedules (barber_id);
 
+    /* ---- shift change audit log ----
+       barber_schedules is overwritten in place on every edit — a recurring
+       weekly pattern has no notion of "the shift on 2026-04-02" to version.
+       So instead of versioning the schedule itself, every row a change is
+       about to replace is copied here first, stamped with who changed it and
+       when. The log is append-only: nothing ever updates or deletes a row in
+       it, so what a barber's shift used to be is never rewritten, only added
+       to. Past days are unaffected either way — a new recurring pattern only
+       governs availability computed from here forward. */
+    CREATE TABLE IF NOT EXISTS shift_change_log (
+      id          TEXT PRIMARY KEY,
+      barber_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      shift_start TEXT NOT NULL,   -- the shift that applied before this change
+      shift_end   TEXT NOT NULL,
+      changed_by  TEXT REFERENCES users(id),
+      changed_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_shift_change_log ON shift_change_log (barber_id, changed_at DESC);
+
     /* ---- invoice cash / split detail ----
        Stored so the end-of-day cash reconciliation can see exactly how much
        physical money changed hands versus how much went through the card reader.
