@@ -74,7 +74,7 @@ const DEMO_EMAIL = process.env.DEMO_EMAIL || "demo@dastaan.test";
 /* ---------------- reference data ---------------- */
 
 const branches = [
-  ["b1", "Dastaan — Marina Walk", "Dubai Marina", "Marina Walk, Tower 4, Ground Floor", "Daily 10:00 – 23:00", "+971 4 000 0001"],
+  ["b1", "Dastaan — Dubai Mall", "Downtown Dubai", "Dubai Mall Zabeel Expansion, Level P6 — Shop SF-042", "Daily 10:00 – 23:00", "+971 4 325 1036"],
   ["b2", "Dastaan — City Centre", "Deira", "City Centre Boulevard, Unit 12", "Daily 10:00 – 22:00", "+971 4 000 0002"],
 ];
 
