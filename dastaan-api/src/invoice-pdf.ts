@@ -43,10 +43,18 @@ export async function renderInvoicePdf(inv: ApiInvoice):Promise<Promise<Buffer>>
 
   const biz = config.business;
 
-  /* header — the supplier, as the FTA needs them identified */
-  doc.fillColor(INK).font("Times-Bold").fontSize(26).text("DASTAAN", { characterSpacing: 6 });
-  doc.moveDown(0.1);
-  doc.rect(44, doc.y + 2, 90, 2).fill(GOLD);
+  /* header — a small drawn monogram standing in for the brand mark, since
+     there is no imported logo asset to place; a gold ring around a serif
+     "D" plus the tracked wordmark next to it, styled rather than plain type. */
+  const headX = doc.x, headY = doc.y;
+  const markCx = headX + 17, markCy = headY + 17;
+  doc.circle(markCx, markCy, 17).lineWidth(1.4).strokeColor(GOLD).stroke();
+  doc.circle(markCx, markCy, 13.5).lineWidth(0.6).strokeColor(GOLD).stroke();
+  doc.fillColor(INK).font("Times-Bold").fontSize(17).text("D", markCx - 5.5, markCy - 8.5);
+  doc.fillColor(INK).font("Times-Bold").fontSize(26).text("DASTAAN", headX + 44, headY - 3, { characterSpacing: 6 });
+  doc.x = headX;
+  doc.y = headY + 34;
+  doc.rect(headX, doc.y + 2, 90, 2).fill(GOLD);
   doc.moveDown(0.6);
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5).text(biz.legalName);
   doc.fillColor(GRAY).font("Helvetica").fontSize(8.5)
@@ -75,6 +83,12 @@ export async function renderInvoicePdf(inv: ApiInvoice):Promise<Promise<Buffer>>
   doc.fillColor(GRAY).font("Helvetica")
     .text(`Payment`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
     .text(`  ${inv.paymentMethod}`);
+  doc.fillColor(GRAY).font("Helvetica")
+    .text(`Barber`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
+    .text(`  ${inv.barberName}`);
+  doc.fillColor(GRAY).font("Helvetica")
+    .text(`Served by`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
+    .text(`  ${inv.issuedByName}`);
 
   /* items table */
   doc.moveDown(1.2);

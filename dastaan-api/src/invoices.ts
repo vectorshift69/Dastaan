@@ -34,6 +34,8 @@ export type Invoice = {
   invoiceNo: string;
   bookingId: string;
   clientName: string;
+  barberName: string;
+  issuedByName: string;
   items: { name: string; price: number }[];
   gross: number;
   discount: number;
@@ -54,16 +56,23 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export async function createInvoiceForBooking(bookingId: string, input: InvoiceInput): Promise<Invoice> {
   const b = await db
     .prepare(
-      "SELECT id, branch_id, client_name, client_phone, service_ids FROM bookings WHERE id = ?"
+      "SELECT id, branch_id, barber_id, client_name, client_phone, service_ids FROM bookings WHERE id = ?"
     )
     .get(bookingId) as
-    | { id: string; branch_id: string; client_name: string; client_phone: string | null; service_ids: string }
+    | { id: string; branch_id: string; barber_id: string; client_name: string; client_phone: string | null; service_ids: string }
     | undefined;
   if (!b) throw Object.assign(new Error("Booking not found"), { statusCode: 404 });
 
   const existing = await db.prepare("SELECT id FROM invoices WHERE booking_id = ?").get(bookingId);
   if (existing)
     throw Object.assign(new Error("This booking already has an invoice"), { statusCode: 409 });
+
+  const barber = await db.prepare("SELECT name FROM users WHERE id = ?").get(b.barber_id) as
+    | { name: string } | undefined;
+  const issuer = await db.prepare("SELECT name FROM users WHERE id = ?").get(input.issuedBy) as
+    | { name: string } | undefined;
+  const barberName = barber?.name ?? "—";
+  const issuedByName = issuer?.name ?? "—";
 
   const serviceIds = JSON.parse(b.service_ids) as string[];
   const items: { name: string; price: number }[] = [];
@@ -92,8 +101,9 @@ export async function createInvoiceForBooking(bookingId: string, input: InvoiceI
   await db.prepare(
     `INSERT INTO invoices (id, invoice_no, booking_id, branch_id, client_name, client_phone,
        items, gross, discount, tip, vat, total, payment_method, issued_by, coupon_code, created_at,
-       cash_received, cash_change, cash_to_wallet, cash_to_tip, split_detail)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       cash_received, cash_change, cash_to_wallet, cash_to_tip, split_detail,
+       barber_id, barber_name, issued_by_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id, invoiceNo, b.id, b.branch_id, b.client_name, b.client_phone,
     JSON.stringify(items), gross, totalDiscount, r2(input.tip), vat, total,
@@ -103,10 +113,11 @@ export async function createInvoiceForBooking(bookingId: string, input: InvoiceI
     input.cashToWallet ?? null,
     input.cashToTip ?? null,
     input.splitDetail ? JSON.stringify(input.splitDetail) : null,
+    b.barber_id, barberName, issuedByName,
   );
 
   return {
-    id, invoiceNo, bookingId: b.id, clientName: b.client_name, items,
+    id, invoiceNo, bookingId: b.id, clientName: b.client_name, barberName, issuedByName, items,
     gross, discount: totalDiscount, tip: r2(input.tip), vat, total,
     paymentMethod: input.method, couponCode: input.couponCode ?? null, createdAt: now(),
     /* same block as invoiceToApi — the desk shows this straight after
@@ -124,6 +135,7 @@ type InvoiceRow = {
   client_name: string; client_phone: string | null; items: string;
   gross: number; discount: number; tip: number; vat: number; total: number;
   payment_method: string; coupon_code: string | null; created_at: string;
+  barber_name: string | null; issued_by_name: string | null;
 };
 
 export const invoiceToApi = (r: InvoiceRow) => ({
@@ -132,6 +144,8 @@ export const invoiceToApi = (r: InvoiceRow) => ({
   bookingId: r.booking_id,
   branchId: r.branch_id,
   clientName: r.client_name,
+  barberName: r.barber_name ?? "—",
+  issuedByName: r.issued_by_name ?? "—",
   items: JSON.parse(r.items) as { name: string; price: number }[],
   gross: r.gross,
   discount: r.discount,

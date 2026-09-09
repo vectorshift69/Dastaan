@@ -723,6 +723,15 @@ export async function migrate() {
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_wallet REAL;
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cash_to_tip    REAL;
 
+    /* ---- who did what, on the invoice ----
+       The barber who performed the service and the staff member who ran the
+       checkout are both named on the printed invoice. Names are captured at
+       invoice time rather than joined live, so a later name change or staff
+       departure never rewrites what an old invoice says. */
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS barber_id       TEXT REFERENCES users(id);
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS barber_name     TEXT;
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS issued_by_name  TEXT;
+
     /* ---- mandatory training videos ----
        Admin uploads a video URL + deadline. Staff must watch the full video
        (enforced client-side by the player; server records completion).

@@ -582,49 +582,35 @@ export default function AppointmentPanel({
             <p className="mt-2 text-sm text-charcoal/55">
               {CURRENCY} {toPay.toFixed(2)} · {method}
             </p>
-            <div className="mt-6 w-full rounded-xl border border-black/10 bg-paper px-5 py-4 text-left">
-              <p className="text-[11px] font-bold tracking-wider text-charcoal/45 uppercase">Tax invoice</p>
-              <p className="mt-1 text-sm font-bold text-ink">{invoice?.invoiceNo}</p>
-              {typeof invoice?.vat === "number" && (
-                <p className="mt-0.5 text-xs text-charcoal/55">
-                  includes {CURRENCY} {invoice.vat.toFixed(2)} VAT ({(cfg.business.vatRate * 100).toFixed(0)}%)
-                </p>
-              )}
-              {/* the TRN belongs on anything that calls itself a tax invoice —
-                  a client asking for one at the desk will look for it here */}
-              {cfg.business.trn && (
-                <p className="mt-1.5 border-t border-black/8 pt-1.5 text-[11px] text-charcoal/50">
-                  {cfg.business.legalName}<br />
-                  <span className="font-semibold text-charcoal/70">TRN {cfg.business.trn}</span>
-                </p>
-              )}
-              <p className="mt-1 text-xs text-charcoal/50">
-                Generated automatically and sent to {appt.client.split(" ")[0] ?? appt.client} by SMS.
-              </p>
-              {invoice?.stripeRef && (
-                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] text-charcoal/50">
-                  Stripe ref:{" "}
-                  <a
-                    href={`https://dashboard.stripe.com/payments/${invoice?.stripeRef}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-mono font-semibold text-charcoal/70 underline"
-                  >
-                    {String(invoice.stripeRef)}
-                  </a>
-                </p>
-              )}
-              {cashAction === "wallet" && cashChange > 0 && (
-                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] font-semibold text-gold-dim">
-                  ◆ {CURRENCY} {cashChange.toFixed(2)} added to {appt.client.split(" ")[0]}&apos;s wallet
-                </p>
-              )}
-              {cashAction === "tip" && cashChange > 0 && (
-                <p className="mt-2 border-t border-black/8 pt-2 text-[11px] text-charcoal/50">
-                  Tip of {CURRENCY} {cashChange.toFixed(2)} recorded for the barber
-                </p>
-              )}
-            </div>
+            {(invoice?.stripeRef || (cashAction === "wallet" && cashChange > 0) || (cashAction === "tip" && cashChange > 0)) && (
+              <div className="mt-6 w-full rounded-xl border border-black/10 bg-paper px-5 py-4 text-left">
+                {invoice?.stripeRef && (
+                  <p className="text-[11px] text-charcoal/50">
+                    Stripe ref:{" "}
+                    <a
+                      href={`https://dashboard.stripe.com/payments/${invoice?.stripeRef}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono font-semibold text-charcoal/70 underline"
+                    >
+                      {String(invoice.stripeRef)}
+                    </a>
+                  </p>
+                )}
+                {cashAction === "wallet" && cashChange > 0 && (
+                  <p className="text-[11px] font-semibold text-gold-dim">
+                    ◆ {CURRENCY} {cashChange.toFixed(2)} added to {appt.client.split(" ")[0]}&apos;s wallet
+                  </p>
+                )}
+                {cashAction === "tip" && cashChange > 0 && (
+                  <p className="text-[11px] text-charcoal/50">
+                    Tip of {CURRENCY} {cashChange.toFixed(2)} recorded for the barber
+                  </p>
+                )}
+              </div>
+            )}
+            {/* The tax invoice itself (invoice no., VAT, TRN, barber, cashier)
+                is never shown on screen — it only exists once this is clicked. */}
             {invoice && !invoice.invoiceNo.startsWith("INV-DEMO") && (
               <a
                 href={`/api/bookings/${appt.id}/invoice/pdf`}
