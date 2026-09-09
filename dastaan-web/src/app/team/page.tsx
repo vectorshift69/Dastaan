@@ -85,11 +85,12 @@ export default function TeamLogin() {
     setDigits((prev) => prev.slice(0, -1));
   }, [lockedFor]);
 
-  /** Fetch today's quote after login; if one exists show the popup. */
+  /** Fetch today's quote after login; only shows on first login of the day. */
   async function fetchQuoteAndProceed() {
     try {
       const res = await fetch("/api/quotes/daily");
-      if (res.ok) {
+      // 204 = already seen today, or no quotes configured → go straight to console
+      if (res.ok && res.status !== 204) {
         const data = await res.json();
         setQuote(data);
         return; // popup will call proceedToConsole when dismissed

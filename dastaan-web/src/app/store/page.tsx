@@ -140,7 +140,7 @@ export default function StorePage() {
 
                   <div className="flex flex-1 flex-col p-4">
                     <span className="text-[10px] tracking-[0.25em] text-ivory/35 uppercase">{p.category}</span>
-                    <h3 className="font-display mt-1.5 text-lg leading-tight text-ivory">{p.name}</h3>
+                    <Link href={`/store/${p.id}`} className="font-display mt-1.5 text-lg leading-tight text-ivory hover:text-gold-2 transition-colors">{p.name}</Link>
                     <p className="mt-1 font-semibold text-gold">{CURRENCY} {p.price}</p>
 
                     <div className="mt-auto pt-4">

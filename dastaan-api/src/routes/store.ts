@@ -52,13 +52,27 @@ export default async function storeRoutes(app: FastifyInstance) {
        and everything ships from it. Never the branch shelves: those belong to
        the chair, and the website cannot see or sell them. */
     return await db.prepare(
-      `SELECT p.id, p.name, p.category, p.price,
+      `SELECT p.id, p.name, p.category, p.price, p.description,
               p.image_url AS "imageUrl",
               GREATEST(0, COALESCE(o.qty, 0) - COALESCE(o.reserved, 0)) AS available
        FROM products p LEFT JOIN online_stock o ON o.product_id = p.id
        WHERE p.kind = 'retail' AND p.active = 1
        ORDER BY p.category, p.name`
     ).all();
+  });
+
+  /* -------- single product detail (public) -------- */
+  app.get("/store/products/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = await db.prepare(
+      `SELECT p.id, p.name, p.category, p.price, p.description,
+              p.image_url AS "imageUrl",
+              GREATEST(0, COALESCE(o.qty, 0) - COALESCE(o.reserved, 0)) AS available
+       FROM products p LEFT JOIN online_stock o ON o.product_id = p.id
+       WHERE p.id = ? AND p.kind = 'retail' AND p.active = 1`
+    ).get(id);
+    if (!row) return reply.code(404).send({ error: "Product not found" });
+    return row;
   });
 
   /* -------- place an order (clients) -------- */
@@ -143,6 +157,34 @@ export default async function storeRoutes(app: FastifyInstance) {
         ? { required: STORE_REQUIRES_FULL_PAYMENT, next: "payment_intent", currency: config.payments.currency }
         : { required: false, note: "Pay on delivery." },
     });
+  });
+
+  /* -------- admin: all orders with client name + email (SUPER ADMIN / ADMIN) -------- */
+  app.get("/store/orders/admin", async (req, reply) => {
+    const s = await requireRole(req, reply, ["super_admin", "admin", "owner"]);
+    if (!s) return;
+    const rows = await db.prepare(`
+      SELECT o.*, u.name AS client_name, u.email AS client_email
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.client_id
+      ORDER BY o.created_at DESC
+      LIMIT 500
+    `).all() as Record<string, unknown>[];
+    return rows.map((o) => ({
+      id: o.id,
+      orderNo: o.order_no,
+      clientName: o.client_name ?? "Unknown",
+      clientEmail: o.client_email ?? "",
+      items: JSON.parse(o.items as string),
+      subtotal: o.subtotal,
+      discount: o.discount,
+      couponCode: o.coupon_code,
+      vat: o.vat,
+      total: o.total,
+      address: o.address,
+      status: o.status,
+      createdAt: o.created_at,
+    }));
   });
 
   /* -------- my orders (clients) / all orders (SUPER ADMIN ONLY) -------- */

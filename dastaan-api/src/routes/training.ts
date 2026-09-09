@@ -312,30 +312,25 @@ export default async function trainingRoutes(app: FastifyInstance) {
 
     const today = now().slice(0, 10); // "YYYY-MM-DD"
 
-    // Return the same quote if already seen today
+    // Already seen today → silent 204; popup must not appear again until tomorrow
     const seen = await db.prepare(
       "SELECT quote_id FROM quote_views WHERE user_id = ? AND viewed_date = ?"
     ).get<{ quote_id: string }>(s.sub, today);
 
-    const quoteId = seen?.quote_id ?? null;
+    if (seen) return reply.code(204).send();
 
-    const quote = quoteId
-      ? await db.prepare(
-          "SELECT id, quote, author FROM motivational_quotes WHERE id = ?"
-        ).get<{ id: string; quote: string; author: string | null }>(quoteId)
-      : await db.prepare(
-          "SELECT id, quote, author FROM motivational_quotes WHERE active = 1 ORDER BY RANDOM() LIMIT 1"
-        ).get<{ id: string; quote: string; author: string | null }>();
+    // First login of the day — pick a random active quote
+    const quote = await db.prepare(
+      "SELECT id, quote, author FROM motivational_quotes WHERE active = 1 ORDER BY RANDOM() LIMIT 1"
+    ).get<{ id: string; quote: string; author: string | null }>();
 
     if (!quote) return reply.code(204).send();
 
-    // Record view (ignore conflict — user already has a row for today)
-    if (!seen) {
-      await db.prepare(
-        `INSERT INTO quote_views (id, quote_id, user_id, viewed_date) VALUES (?, ?, ?, ?)
-         ON CONFLICT (user_id, viewed_date) DO NOTHING`
-      ).run(uid(), quote.id, s.sub, today);
-    }
+    // Record that this user has seen their quote for today
+    await db.prepare(
+      `INSERT INTO quote_views (id, quote_id, user_id, viewed_date) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id, viewed_date) DO NOTHING`
+    ).run(uid(), quote.id, s.sub, today);
 
     return quote;
   });

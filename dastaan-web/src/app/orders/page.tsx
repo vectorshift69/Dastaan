@@ -78,11 +78,21 @@ export default function MyOrders() {
                 </span>
               </div>
 
-              <div className="mt-4 space-y-1.5 text-sm">
+              <div className="mt-4 space-y-2">
                 {o.items.map((it) => (
-                  <div key={it.productId} className="flex justify-between text-ivory/70">
-                    <span>{it.qty}× {it.name}</span>
-                    <span>{CURRENCY} {(it.price * it.qty).toFixed(2)}</span>
+                  <div key={it.productId} className="flex items-center gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`https://placehold.co/56x56/1a1a1a/c9a227?text=${encodeURIComponent(it.name.split(" ")[0])}`}
+                      alt={it.name}
+                      className="h-14 w-14 shrink-0 rounded-lg object-contain ring-1 ring-gold/20"
+                    />
+                    <div className="flex flex-1 items-center justify-between text-sm">
+                      <Link href={`/store/${it.productId}`} className="text-ivory/70 hover:text-gold-2 transition-colors">
+                        {it.qty}× {it.name}
+                      </Link>
+                      <span className="text-ivory/55">{CURRENCY} {(it.price * it.qty).toFixed(2)}</span>
+                    </div>
                   </div>
                 ))}
               </div>
