@@ -62,6 +62,7 @@ export default function TeamLogin() {
   const [lockedFor, setLockedFor] = useState(0);
   const [welcome, setWelcome] = useState<string | null>(null);
   const [quote, setQuote] = useState<DailyQuote | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const checking = useRef(false);
 
   /* lockout countdown */
@@ -109,6 +110,7 @@ export default function TeamLogin() {
   useEffect(() => {
     if (digits.length !== 4) return;
     checking.current = true;
+    setVerifying(true);
     const code = digits.join("");
     (async () => {
       try {
@@ -133,6 +135,7 @@ export default function TeamLogin() {
         setDigits([]);
       } finally {
         checking.current = false;
+        setVerifying(false);
       }
     })();
   }, [digits]);
@@ -166,6 +169,8 @@ export default function TeamLogin() {
           <div className="mt-10 h-6 text-center">
             {welcome ? (
               <p className="animate-fade-in text-sm font-medium text-gold-2">Welcome, {welcome}</p>
+            ) : verifying ? (
+              <p className="text-sm text-ivory/40">Checking…</p>
             ) : lockedFor > 0 ? (
               <p className="text-sm text-[#e08a80]">Too many attempts — locked for {lockedFor}s</p>
             ) : error ? (
