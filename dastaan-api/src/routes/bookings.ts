@@ -482,21 +482,6 @@ export default async function bookingRoutes(app: FastifyInstance) {
     return reply.code(201).send({ id, barberId, minutes });
   });
 
-  /* -------- one-time backfill: bookings paid before "Completed" existed --------
-     Remove this route once it has been run against production; it exists only
-     to fix historical rows stuck on their pre-checkout status. Safe to call
-     more than once — the WHERE clause only ever matches rows still needing it. */
-  app.post("/admin/backfill-completed-status", async (req, reply) => {
-    const s = await requireRole(req, reply, ["super_admin"]);
-    if (!s) return;
-    const r = await db.prepare(
-      `UPDATE bookings SET status = 'Completed', updated_at = ?
-       WHERE paid = 1 AND status NOT IN ('Completed', 'Cancelled', 'No Show')`
-    ).run(now());
-    await audit("backfill_completed_status", { actorId: s.sub, actorRole: s.role, detail: `${r.changes} rows`, ip: req.ip });
-    return { updated: r.changes ?? 0 };
-  });
-
   /* -------- status pipeline (staff only; Cancel requires reason) -------- */
   app.patch("/bookings/:id/status", async (req, reply) => {
     const s = await requireRole(req, reply, ["admin", "super_admin"]);
