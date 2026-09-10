@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "seed:built": "node dist/seed.js",
-    "seed:built:reset": "node dist/seed.js --reset"
+    "seed:built:reset": "node dist/seed.js --reset",
+    "migrate:fresha": "tsx src/migrate-fresha.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.5",

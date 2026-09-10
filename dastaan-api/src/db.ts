@@ -820,6 +820,9 @@ export async function migrate() {
     /* the storefront's product detail page has always rendered this; the
        column just never existed, so /store/products has been 500ing. */
     ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
+    /* manufacturer/brand line, e.g. "ELEMIS", "Davroe" — separate from the
+       supplier a product is bought from, which the app doesn't track. */
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS brand TEXT;
   `);
 }
 
