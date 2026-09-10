@@ -817,6 +817,9 @@ export async function migrate() {
        Null means no photo has been uploaded yet; the UI falls back to initials. */
     ALTER TABLE users    ADD COLUMN IF NOT EXISTS photo_url TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;
+    /* the storefront's product detail page has always rendered this; the
+       column just never existed, so /store/products has been 500ing. */
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
   `);
 }
 
