@@ -43,6 +43,9 @@ export type Invoice = {
   vat: number;
   total: number;
   paymentMethod: string;
+  /* how a Split payment broke down between cash and card — undefined for
+     every other method, since there is nothing to split. */
+  splitDetail?: { cash: number; card: number; [k: string]: number };
   couponCode: string | null;
   createdAt: string;
   /* The supplier, as a UAE tax invoice has to identify them. Part of the
@@ -119,7 +122,7 @@ export async function createInvoiceForBooking(bookingId: string, input: InvoiceI
   return {
     id, invoiceNo, bookingId: b.id, clientName: b.client_name, barberName, issuedByName, items,
     gross, discount: totalDiscount, tip: r2(input.tip), vat, total,
-    paymentMethod: input.method, couponCode: input.couponCode ?? null, createdAt: now(),
+    paymentMethod: input.method, splitDetail: input.splitDetail, couponCode: input.couponCode ?? null, createdAt: now(),
     /* same block as invoiceToApi — the desk shows this straight after
        checkout, and that screen calls itself a tax invoice too */
     business: {
@@ -135,7 +138,7 @@ type InvoiceRow = {
   client_name: string; client_phone: string | null; items: string;
   gross: number; discount: number; tip: number; vat: number; total: number;
   payment_method: string; coupon_code: string | null; created_at: string;
-  barber_name: string | null; issued_by_name: string | null;
+  barber_name: string | null; issued_by_name: string | null; split_detail: string | null;
 };
 
 export const invoiceToApi = (r: InvoiceRow) => ({
@@ -153,6 +156,7 @@ export const invoiceToApi = (r: InvoiceRow) => ({
   vat: r.vat,
   total: r.total,
   paymentMethod: r.payment_method,
+  splitDetail: r.split_detail ? (JSON.parse(r.split_detail) as { cash: number; card: number }) : undefined,
   couponCode: r.coupon_code,
   createdAt: r.created_at,
   /* Whoever renders this — the console, the client's account, a PDF — is

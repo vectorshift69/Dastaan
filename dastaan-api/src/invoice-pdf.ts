@@ -108,9 +108,12 @@ export async function renderInvoicePdf(inv: ApiInvoice): Promise<Buffer> {
   doc.fillColor(GRAY).font("Helvetica")
     .text(`Billed to`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
     .text(`  ${inv.clientName}`);
+  const paymentValue = inv.splitDetail
+    ? `${inv.paymentMethod} — Cash ${inv.splitDetail.cash.toFixed(2)} · Card ${inv.splitDetail.card.toFixed(2)}`
+    : inv.paymentMethod;
   doc.fillColor(GRAY).font("Helvetica")
     .text(`Payment`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
-    .text(`  ${inv.paymentMethod}`);
+    .text(`  ${paymentValue}`);
   doc.fillColor(GRAY).font("Helvetica")
     .text(`Barber`, 44, doc.y + 2, { continued: true }).fillColor(INK).font("Helvetica-Bold")
     .text(`  ${inv.barberName}`);

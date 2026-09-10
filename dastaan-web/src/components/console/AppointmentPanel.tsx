@@ -71,15 +71,17 @@ export default function AppointmentPanel({
   /* A paid booking doesn't always have an invoice row — some were marked paid
      directly rather than through the full checkout (older data, quick
      corrections). Check before offering a download that would otherwise 404. */
-  const [hasInvoice, setHasInvoice] = useState<boolean | null>(null);
+  const [pastInvoice, setPastInvoice] = useState<{ paymentMethod: string; splitDetail?: { cash: number; card: number } } | null | undefined>(undefined);
   useEffect(() => {
-    if (mode !== "details" || !appt.paid) { setHasInvoice(null); return; }
+    if (mode !== "details" || !appt.paid) { setPastInvoice(undefined); return; }
     let cancelled = false;
     fetch(`/api/bookings/${appt.id}/invoice`)
-      .then((r) => { if (!cancelled) setHasInvoice(r.ok); })
-      .catch(() => { if (!cancelled) setHasInvoice(false); });
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setPastInvoice(d); })
+      .catch(() => { if (!cancelled) setPastInvoice(null); });
     return () => { cancelled = true; };
   }, [mode, appt.id, appt.paid]);
+  const hasInvoice = pastInvoice === undefined ? null : pastInvoice !== null;
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponErr, setCouponErr] = useState<string | null>(null);
@@ -683,6 +685,14 @@ export default function AppointmentPanel({
       {mode === "details" && appt.paid && (
         <div className="border-t border-[#eee9dd] px-6 py-4">
           <p className="text-center text-sm font-semibold text-st-started">● Paid — session complete</p>
+          {pastInvoice && (
+            <p className="mt-1 text-center text-xs text-charcoal/55">
+              {pastInvoice.paymentMethod}
+              {pastInvoice.splitDetail && (
+                <> — Cash {CURRENCY} {pastInvoice.splitDetail.cash.toFixed(2)} · Card {CURRENCY} {pastInvoice.splitDetail.card.toFixed(2)}</>
+              )}
+            </p>
+          )}
           {hasInvoice === true && (
             <a
               href={`/api/bookings/${appt.id}/invoice/pdf`}

@@ -20,7 +20,24 @@ const today = () => salonToday();
 type InvRow = {
   gross: number; tip: number; vat: number; total: number; discount: number;
   payment_method: string; items: string; created_at: string; branch_id: string;
+  split_detail: string | null;
 };
+
+/** A Split invoice's total belongs to no single till — it goes to whichever
+ *  actual payment methods the client used, in the amounts they used them.
+ *  Decomposing it here is what lets a cash-reconciliation report answer
+ *  "how much cash actually changed hands today" without a Split line always
+ *  quietly excluded from it. */
+function methodContributions(inv: InvRow): { method: string; amount: number }[] {
+  if (inv.payment_method === "Split" && inv.split_detail) {
+    const { cash, card } = JSON.parse(inv.split_detail) as { cash: number; card: number };
+    const parts: { method: string; amount: number }[] = [];
+    if (cash > 0) parts.push({ method: "Cash", amount: cash });
+    if (card > 0) parts.push({ method: "Card", amount: card });
+    if (parts.length) return parts;
+  }
+  return [{ method: inv.payment_method, amount: inv.total }];
+}
 
 export default async function reportRoutes(app: FastifyInstance) {
   /* ---------------- sales summary: SUPER ADMIN ONLY ---------------- */
@@ -33,10 +50,10 @@ export default async function reportRoutes(app: FastifyInstance) {
 
     const rows = (q.branchId
       ? await db.prepare(
-          "SELECT gross, tip, vat, total, discount, payment_method, items, created_at, branch_id FROM invoices WHERE branch_id = ? AND created_at BETWEEN ? AND ?"
+          "SELECT gross, tip, vat, total, discount, payment_method, split_detail, items, created_at, branch_id FROM invoices WHERE branch_id = ? AND created_at BETWEEN ? AND ?"
         ).all(q.branchId, `${from}T00:00:00`, `${to}T23:59:59.999Z`)
       : await db.prepare(
-          "SELECT gross, tip, vat, total, discount, payment_method, items, created_at, branch_id FROM invoices WHERE created_at BETWEEN ? AND ?"
+          "SELECT gross, tip, vat, total, discount, payment_method, split_detail, items, created_at, branch_id FROM invoices WHERE created_at BETWEEN ? AND ?"
         ).all(`${from}T00:00:00`, `${to}T23:59:59.999Z`)) as InvRow[];
 
     const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -54,8 +71,10 @@ export default async function reportRoutes(app: FastifyInstance) {
       const day = inv.created_at.slice(0, 10);
       const d = byDay.get(day) ?? { revenue: 0, count: 0 };
       d.revenue += inv.total; d.count++; byDay.set(day, d);
-      const m = byMethod.get(inv.payment_method) ?? { revenue: 0, count: 0 };
-      m.revenue += inv.total; m.count++; byMethod.set(inv.payment_method, m);
+      for (const part of methodContributions(inv)) {
+        const m = byMethod.get(part.method) ?? { revenue: 0, count: 0 };
+        m.revenue += part.amount; m.count++; byMethod.set(part.method, m);
+      }
       const b = byBranch.get(inv.branch_id) ?? { revenue: 0, count: 0 };
       b.revenue += inv.total; b.count++; byBranch.set(inv.branch_id, b);
       for (const item of JSON.parse(inv.items) as { name: string; price: number }[]) {
