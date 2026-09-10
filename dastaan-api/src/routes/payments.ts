@@ -81,6 +81,7 @@ import {
   logCriticalPaymentAlert,
   recordReconciliationNeeded,
   findOrderById,
+  orderAmountDue,
   findBookingById,
   findInvoiceById,
   priceBookingServices,
@@ -364,7 +365,7 @@ async function resolveOrderPayable(orderId: string, session: Session): Promise<P
   if (!order) throw new NotFoundError("Order not found");
   assertOwnership(session, order.client_id);
   if (order.status !== "placed") throw new ConflictError(`That order is already ${order.status}`);
-  return { amount: Number(order.total), kind: "order", description: "Dastaan store order" };
+  return { amount: orderAmountDue(order), kind: "order", description: "Dastaan store order" };
 }
 
 /**

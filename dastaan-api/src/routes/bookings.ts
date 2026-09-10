@@ -7,6 +7,7 @@ import { onBookingCreated, onBookingCancelled, onServicePaid, onInvoiceIssued, d
 import { createInvoiceForBooking, invoiceToApi } from "../invoices.js";
 import { renderInvoicePdf } from "../invoice-pdf.js";
 import { earnPoints, loyaltyForClient } from "../loyalty.js";
+import { recordVisit } from "../rewards.js";
 import { checkCoupon, redeemCoupon } from "../coupons.js";
 import { moveStock } from "./inventory.js";
 import { createReviewInvite } from "./reviews.js";
@@ -613,8 +614,10 @@ export default async function bookingRoutes(app: FastifyInstance) {
     // loyalty: registered clients earn 1 point per AED of the service total
     const owner = await db.prepare("SELECT client_id FROM bookings WHERE id = ?").get(id) as { client_id: string | null };
     const pointsEarned = owner.client_id ? await earnPoints(owner.client_id, id, invoice.gross) : 0;
+    // every 5th completed visit earns AED 25 store credit, automatically
+    const creditEarned = owner.client_id ? await recordVisit(owner.client_id, id) : 0;
 
-    return reply.code(201).send({ ...invoice, pointsEarned });
+    return reply.code(201).send({ ...invoice, pointsEarned, creditEarned });
   });
 
   /* -------- invoices (staff, branch-scoped) -------- */

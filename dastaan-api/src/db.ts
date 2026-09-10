@@ -783,6 +783,34 @@ export async function migrate() {
       UNIQUE (user_id, viewed_date)
     );
 
+    /* ---- visit-based store credit ----
+       Every 5th completed visit (a checked-out booking) earns AED 25 credit,
+       redeemable against a store order. client_credit_transactions is an
+       append-only ledger of every grant and redemption, so the balance is
+       always reconstructable — same pattern as points_transactions. */
+    CREATE TABLE IF NOT EXISTS client_credit_accounts (
+      id          TEXT PRIMARY KEY,
+      client_id   TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      balance     REAL NOT NULL DEFAULT 0,
+      visit_count INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS client_credit_transactions (
+      id         TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES client_credit_accounts(id) ON DELETE CASCADE,
+      delta      REAL NOT NULL,   -- positive = earned, negative = redeemed
+      reason     TEXT NOT NULL,   -- 'visit_reward' | 'store_redemption'
+      booking_id TEXT REFERENCES bookings(id),
+      order_id   TEXT REFERENCES orders(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_client_credit_tx ON client_credit_transactions (account_id, created_at DESC);
+
+    /* Orders track how much store credit was applied, kept separate from the
+       tax total so the VAT invoice figure never depends on how it was paid. */
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS credit_applied REAL NOT NULL DEFAULT 0;
+
     /* ---- media columns ----
        A URL pointing to a photo/image in cloud storage (Supabase Storage or
        Cloudflare R2). The app never stores the file itself — only the public URL.

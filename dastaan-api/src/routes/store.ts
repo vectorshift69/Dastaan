@@ -12,6 +12,7 @@ import { z } from "zod";
 import { db, uid, now, nextCounter } from "../db.js";
 import { requireRole, audit } from "../security.js";
 import { checkCoupon, redeemCoupon } from "../coupons.js";
+import { creditBalanceFor, redeemCredit } from "../rewards.js";
 import { reserveOnline, releaseOnline, consumeOnline, type Line } from "./online-inventory.js";
 import { config } from "../config.js";
 
@@ -28,6 +29,8 @@ const orderSchema = z.object({
     qty: z.number().int().min(1).max(50),
   })).min(1).max(30),
   couponCode: z.string().max(30).optional(),
+  /* apply the client's visit-reward store credit (earned every 5th visit) to this order */
+  useCredit: z.boolean().optional(),
   address: z.string({ error: "A delivery address is required" })
     .min(10, "That address is too short — include the building and area")
     .max(400),
@@ -111,6 +114,15 @@ export default async function storeRoutes(app: FastifyInstance) {
     const body = parsed.data;
     const lines: Line[] = items.map((i) => ({ productId: i.productId, qty: i.qty }));
 
+    /* Store credit offsets what the client pays, but never the VAT figure —
+       gross/vat above stay the true tax-invoice numbers regardless. */
+    let creditApplied = 0;
+    if (body.useCredit) {
+      const acc = await creditBalanceFor(s.sub);
+      creditApplied = r2(Math.min(acc.balance, gross));
+    }
+    const amountDue = r2(gross - creditApplied);
+
     const id = uid();
     const orderNo = `ORD-${year}-${String(await nextCounter(`order:${year}`)).padStart(5, "0")}`;
 
@@ -134,12 +146,13 @@ export default async function storeRoutes(app: FastifyInstance) {
 
         await db.prepare(
           `INSERT INTO orders (id, order_no, client_id, items, subtotal, discount, coupon_code, vat, total,
-             address, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+             credit_applied, address, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(id, orderNo, s.sub, JSON.stringify(items), subtotal, discount,
-          code ? code.toUpperCase() : null, vat, gross, body.address, now(), now());
+          code ? code.toUpperCase() : null, vat, gross, creditApplied, body.address, now(), now());
 
         if (couponId) await redeemCoupon(couponId, `order:${id}`, discount, s.sub);
+        if (creditApplied > 0) await redeemCredit(s.sub, creditApplied, id);
       });
     } catch (err) {
       const e = err as { statusCode?: number; message?: string };
@@ -149,9 +162,10 @@ export default async function storeRoutes(app: FastifyInstance) {
     await audit("order_placed", { actorId: s.sub, actorRole: s.role, detail: orderNo, ip: req.ip });
 
     /* Goods are always paid for in full — see STORE_REQUIRES_FULL_PAYMENT.
-       With card payments off, that means paying at the counter. */
+       With card payments off, that means paying at the counter, less
+       whatever store credit was applied above. */
     return reply.code(201).send({
-      id, orderNo, subtotal, discount, vat, total: gross, status: "placed",
+      id, orderNo, subtotal, discount, vat, total: gross, creditApplied, amountDue, status: "placed",
       address: body.address,
       payment: config.payments.online
         ? { required: STORE_REQUIRES_FULL_PAYMENT, next: "payment_intent", currency: config.payments.currency }

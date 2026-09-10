@@ -7,8 +7,9 @@ import { useConfig } from "@/lib/config";
 import { CURRENCY } from "@/lib/data";
 import StripePaymentForm from "@/components/StripePaymentForm";
 
-type Placed = { orderNo: string; total: number; vat: number; discount: number };
+type Placed = { orderNo: string; total: number; vat: number; discount: number; creditApplied: number; amountDue: number };
 type PendingOrder = Placed & { id: string };
+type Credit = { balance: number; visitCount: number; visitsToNextReward: number };
 
 export default function CartDrawer({ onClose }: { onClose: () => void }) {
   const cart = useCart();
@@ -36,6 +37,16 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* visit-reward store credit — offered at checkout when there's a balance */
+  const [credit, setCredit] = useState<Credit | null>(null);
+  const [useCredit, setUseCredit] = useState(true);
+  useEffect(() => {
+    fetch("/api/rewards/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setCredit(d); })
+      .catch(() => {});
+  }, []);
+
   /* Order has been created (unpaid) and is waiting on a card, or on the
      client choosing "pay on delivery" instead. */
   const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
@@ -44,7 +55,9 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
   const [intentError, setIntentError] = useState<string | null>(null);
   const [paidOnline, setPaidOnline] = useState(false);
 
-  const total = Math.max(0, cart.subtotal - (coupon?.discount ?? 0));
+  const grossAfterCoupon = Math.max(0, cart.subtotal - (coupon?.discount ?? 0));
+  const creditApplied = useCredit ? Math.min(credit?.balance ?? 0, grossAfterCoupon) : 0;
+  const total = Math.max(0, grossAfterCoupon - creditApplied);
 
   const startPaymentIntent = async (orderId: string) => {
     setIntentLoading(true);
@@ -100,13 +113,17 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           items: cart.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
           couponCode: coupon?.code,
+          useCredit: creditApplied > 0,
           address: address.trim(),
         }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.status === 401 || res.status === 403) { setNeedsSignIn(true); return; }
       if (!res.ok) { setError(d.error ?? "Could not place the order"); return; }
-      const order: PendingOrder = { id: d.id, orderNo: d.orderNo, total: d.total, vat: d.vat, discount: d.discount };
+      const order: PendingOrder = {
+        id: d.id, orderNo: d.orderNo, total: d.total, vat: d.vat, discount: d.discount,
+        creditApplied: d.creditApplied ?? 0, amountDue: d.amountDue ?? d.total,
+      };
       cart.clear();
       if (d.payment?.required) {
         setPendingOrder(order);
@@ -144,8 +161,13 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
           <div className="animate-fade-up flex flex-1 flex-col overflow-y-auto px-6 py-8">
             <p className="text-sm text-ivory/55">{pendingOrder.orderNo}</p>
             <h3 className="font-display mt-1 text-2xl text-ivory">
-              {CURRENCY} {pendingOrder.total.toFixed(2)}
+              {CURRENCY} {pendingOrder.amountDue.toFixed(2)}
             </h3>
+            {pendingOrder.creditApplied > 0 && (
+              <p className="mt-1 text-xs text-gold-2">
+                {CURRENCY} {pendingOrder.creditApplied.toFixed(2)} store credit applied
+              </p>
+            )}
 
             <div className="mt-6">
               {intentLoading ? (
@@ -153,7 +175,7 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
               ) : clientSecret ? (
                 <StripePaymentForm
                   clientSecret={clientSecret}
-                  amountLabel={`${CURRENCY} ${pendingOrder.total.toFixed(2)}`}
+                  amountLabel={`${CURRENCY} ${pendingOrder.amountDue.toFixed(2)}`}
                   onSuccess={() => { setPaidOnline(true); setPlaced(pendingOrder); }}
                 />
               ) : intentError ? (
@@ -182,8 +204,11 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
             </div>
             <p className="font-display mt-6 text-2xl text-ivory">{placed.orderNo}</p>
             <p className="mt-2 text-sm text-ivory/55">
-              {CURRENCY} {placed.total.toFixed(2)} · incl. VAT {CURRENCY} {placed.vat.toFixed(2)}
+              {CURRENCY} {placed.amountDue.toFixed(2)} · incl. VAT {CURRENCY} {placed.vat.toFixed(2)}
             </p>
+            {placed.creditApplied > 0 && (
+              <p className="mt-1 text-xs text-gold-2">{CURRENCY} {placed.creditApplied.toFixed(2)} store credit applied</p>
+            )}
             <p className="mt-6 text-xs leading-relaxed text-ivory/40">
               {paidOnline
                 ? "Payment received. We'll email you when it ships."
@@ -271,6 +296,22 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
                 {coupon && <p className="mt-2 text-xs font-semibold text-gold-2">✓ {coupon.code} — {CURRENCY} {coupon.discount.toFixed(2)} off</p>}
                 {couponErr && <p className="mt-2 text-xs text-[#e08a80]">{couponErr}</p>}
               </div>
+
+              {/* visit-reward store credit */}
+              {credit && credit.balance > 0 && (
+                <label className="mt-6 flex cursor-pointer items-start gap-3 rounded-2xl border border-gold/25 bg-gold/5 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={useCredit}
+                    onChange={(e) => setUseCredit(e.target.checked)}
+                    className="mt-0.5 accent-gold-2"
+                  />
+                  <span className="text-sm text-ivory/80">
+                    Use your {CURRENCY} {credit.balance.toFixed(2)} store credit
+                    <span className="mt-0.5 block text-[11px] text-ivory/40">Earned every 5th visit to Dastaan</span>
+                  </span>
+                </label>
+              )}
             </div>
 
             {/* ---- footer ---- */}
@@ -283,6 +324,12 @@ export default function CartDrawer({ onClose }: { onClose: () => void }) {
                 <div className="mt-1 flex items-center justify-between text-sm text-gold-2">
                   <span>{coupon.code}</span>
                   <span>− {CURRENCY} {coupon.discount.toFixed(2)}</span>
+                </div>
+              )}
+              {creditApplied > 0 && (
+                <div className="mt-1 flex items-center justify-between text-sm text-gold-2">
+                  <span>Store credit</span>
+                  <span>− {CURRENCY} {creditApplied.toFixed(2)}</span>
                 </div>
               )}
               <div className="mt-3 flex items-center justify-between border-t border-ivory/10 pt-3">

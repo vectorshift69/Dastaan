@@ -23,6 +23,7 @@ import reviewRoutes from "./routes/reviews.js";
 import clientRoutes from "./routes/clients.js";
 import paymentRoutes from "./routes/payments.js";
 import trainingRoutes from "./routes/training.js";
+import rewardsRoutes from "./routes/rewards.js";
 import { startScheduler } from "./notify/service.js";
 
 const app = Fastify({
@@ -106,6 +107,7 @@ await app.register(googleAuthRoutes);
 await app.register(bookingRoutes);
 await app.register(catalogRoutes);
 await app.register(loyaltyRoutes);
+await app.register(rewardsRoutes);
 await app.register(inventoryRoutes);
 await app.register(onlineInventoryRoutes);
 await app.register(userRoutes);

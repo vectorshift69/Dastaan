@@ -11,6 +11,7 @@ import { db, uid, now } from "../db.js";
 import { requireRole, audit } from "../security.js";
 import { loyaltyForClient } from "../loyalty.js";
 import { spendTierFor } from "../tiers.js";
+import { creditBalanceFor } from "../rewards.js";
 
 const updateSchema = z.object({
   name: z.string().min(2).max(80).optional(),
@@ -110,6 +111,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         registered: false,
         loyalty: null,
         spendTier: null,
+        rewards: null,
         history: await withServiceNames(rows),
       };
     }
@@ -134,6 +136,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       registered: true,
       loyalty: await loyaltyForClient(id),
       spendTier: await spendTierFor(id),
+      rewards: await creditBalanceFor(id),
       history: await withServiceNames(history),
     };
   });

@@ -17,6 +17,7 @@ type Detail = {
   registered: boolean;
   loyalty: { tier: string; points: number; lifetimePoints: number } | null;
   spendTier: SpendTier | null;
+  rewards: { balance: number; visitCount: number; visitsToNextReward: number } | null;
   history: { id: string; startsAt: string; status: string; paid: boolean; barber: string; services: string[] }[];
 };
 
@@ -192,6 +193,28 @@ export default function ClientsView() {
               <p className="font-display mt-0.5 text-xl text-gold-2">
                 {selected.loyalty.points.toLocaleString()} pts · {selected.loyalty.tier}
               </p>
+            </div>
+          )}
+
+          {selected.rewards && (
+            <div className="mt-3 rounded-xl border border-black/8 bg-paper/60 px-4 py-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] tracking-[0.2em] text-charcoal/45 uppercase">Visit rewards</p>
+                <p className="text-xs font-bold text-gold-dim">
+                  {selected.rewards.visitCount % 5}/5 visits to next reward
+                </p>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/8">
+                <div
+                  className="h-full rounded-full bg-gold"
+                  style={{ width: `${((selected.rewards.visitCount % 5) / 5) * 100}%` }}
+                />
+              </div>
+              {selected.rewards.balance > 0 && (
+                <p className="mt-2 text-xs font-semibold text-charcoal/70">
+                  {CURRENCY} {selected.rewards.balance.toFixed(2)} store credit available
+                </p>
+              )}
             </div>
           )}
 

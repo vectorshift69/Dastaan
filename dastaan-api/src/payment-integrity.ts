@@ -293,7 +293,7 @@ export async function recordReconciliationNeeded(input: ReconciliationInput, log
 /* Source-of-truth lookups — what a payment SHOULD cost, read fresh.      */
 /* ==================================================================== */
 
-type OrderRow = { id: string; client_id: string; total: number; status: string };
+type OrderRow = { id: string; client_id: string; total: number; credit_applied: number; status: string };
 type BookingRow = {
   id: string;
   client_id: string | null;
@@ -309,8 +309,12 @@ type InvoiceRow = { id: string; invoice_no: string; total: number; settled: numb
  * @returns the order, or undefined if it does not exist
  */
 export async function findOrderById(orderId: string): Promise<OrderRow | undefined> {
-  return db.prepare("SELECT id, client_id, total, status FROM orders WHERE id = ?").get<OrderRow>(orderId);
+  return db.prepare("SELECT id, client_id, total, credit_applied, status FROM orders WHERE id = ?").get<OrderRow>(orderId);
 }
+
+/** What the order still owes after store credit already applied to it — never below zero. */
+export const orderAmountDue = (order: OrderRow): number =>
+  Math.max(0, Number(order.total) - Number(order.credit_applied ?? 0));
 
 /**
  * Looks up a booking by id.
@@ -412,7 +416,7 @@ async function sourceAmountFor(
 ): Promise<number | null> {
   if (payment.kind === "order" && payment.order_id) {
     const order = await findOrderById(payment.order_id);
-    return order ? Number(order.total) : null;
+    return order ? orderAmountDue(order) : null;
   }
   if (payment.kind === "booking" && payment.booking_id) {
     const booking = await findBookingById(payment.booking_id);
