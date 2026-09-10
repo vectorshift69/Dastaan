@@ -59,6 +59,19 @@ export default function AppointmentPanel({
 
   const [invoice, setInvoice] = useState<{ invoiceNo: string; vat?: number; stripeRef?: string } | null>(null);
   const [paying, setPaying] = useState(false);
+
+  /* A paid booking doesn't always have an invoice row — some were marked paid
+     directly rather than through the full checkout (older data, quick
+     corrections). Check before offering a download that would otherwise 404. */
+  const [hasInvoice, setHasInvoice] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (mode !== "details" || !appt.paid) { setHasInvoice(null); return; }
+    let cancelled = false;
+    fetch(`/api/bookings/${appt.id}/invoice`)
+      .then((r) => { if (!cancelled) setHasInvoice(r.ok); })
+      .catch(() => { if (!cancelled) setHasInvoice(false); });
+    return () => { cancelled = true; };
+  }, [mode, appt.id, appt.paid]);
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponErr, setCouponErr] = useState<string | null>(null);
@@ -659,14 +672,19 @@ export default function AppointmentPanel({
       {mode === "details" && appt.paid && (
         <div className="border-t border-[#eee9dd] px-6 py-4">
           <p className="text-center text-sm font-semibold text-st-started">● Paid — session complete</p>
-          <a
-            href={`/api/bookings/${appt.id}/invoice/pdf`}
-            download
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-ink/20 py-3 text-sm font-bold text-ink transition-colors hover:border-gold hover:text-gold-dim"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            Download invoice (PDF)
-          </a>
+          {hasInvoice === true && (
+            <a
+              href={`/api/bookings/${appt.id}/invoice/pdf`}
+              download
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-ink/20 py-3 text-sm font-bold text-ink transition-colors hover:border-gold hover:text-gold-dim"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Download invoice (PDF)
+            </a>
+          )}
+          {hasInvoice === false && (
+            <p className="mt-3 text-center text-xs text-charcoal/40">No invoice on record for this visit</p>
+          )}
         </div>
       )}
       {mode === "checkout" && (
