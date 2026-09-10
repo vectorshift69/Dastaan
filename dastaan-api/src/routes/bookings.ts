@@ -319,8 +319,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
   app.get("/barbers/:barberId/schedule", async (req, reply) => {
     const { barberId } = req.params as { barberId: string };
     const rows = await db
-      .prepare("SELECT day_of_week, shift_start, shift_end FROM barber_schedules WHERE barber_id = ? ORDER BY day_of_week")
-      .all(barberId) as { day_of_week: number; shift_start: string; shift_end: string }[];
+      .prepare(
+        `SELECT day_of_week AS "dayOfWeek", shift_start AS "shiftStart", shift_end AS "shiftEnd"
+         FROM barber_schedules WHERE barber_id = ? ORDER BY day_of_week`
+      )
+      .all(barberId) as { dayOfWeek: number; shiftStart: string; shiftEnd: string }[];
     return { barberId, schedule: rows };
   });
 

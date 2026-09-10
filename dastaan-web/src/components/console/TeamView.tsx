@@ -48,6 +48,7 @@ export default function TeamView({ meId }: { meId?: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState<"staff" | "shop" | null>(null);
   const [dialog, setDialog] = useState<{ kind: "code" | "password"; user: User } | null>(null);
+  const [shiftsFor, setShiftsFor] = useState<User | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/users");
@@ -149,6 +150,12 @@ export default function TeamView({ meId }: { meId?: string }) {
                 </td>
                 <td className="px-4 py-3 text-charcoal/70">{u.branchArea ?? "—"}</td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
+                  {u.role === "barber" && (
+                    <button onClick={() => setShiftsFor(u)}
+                      className="mr-2 rounded-full border border-black/12 px-3 py-1 text-xs font-bold hover:border-gold">
+                      Set shifts
+                    </button>
+                  )}
                   <button onClick={() => setDialog({ kind: "code", user: u })}
                     className="rounded-full border border-black/12 px-3 py-1 text-xs font-bold hover:border-gold">
                     {u.id === meId ? "Change my code" : "Set new code"}
@@ -243,6 +250,12 @@ export default function TeamView({ meId }: { meId?: string }) {
         <PasswordDialog
           user={dialog.user}
           onClose={(m) => { setDialog(null); if (m) { say(m); load(); } }}
+        />
+      )}
+      {shiftsFor && (
+        <ShiftDialog
+          user={shiftsFor}
+          onClose={(m) => { setShiftsFor(null); if (m) say(m); }}
         />
       )}
     </div>
@@ -511,6 +524,127 @@ function PasswordDialog({ user, onClose }: { user: User; onClose: (msg: string |
       />
       {err && <p className="mt-2 text-sm text-st-cancel">{err}</p>}
       <Actions onCancel={() => onClose(null)} onSubmit={submit} busy={busy} label="Set the password" />
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Weekly shifts — recurring, day-of-week only. Set once, it applies    */
+/* every week until changed again; the API archives whatever it        */
+/* replaces to an audit log, so nothing here is ever silently lost.     */
+/* ------------------------------------------------------------------ */
+
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+type ShiftRow = { dayOfWeek: number; shiftStart: string; shiftEnd: string };
+type HistoryRow = ShiftRow & { changedAt: string; changedBy: string | null };
+
+function ShiftDialog({ user, onClose }: { user: User; onClose: (msg: string | null) => void }) {
+  const [days, setDays] = useState<({ working: boolean; start: string; end: string })[]>(
+    DAYS.map(() => ({ working: false, start: "10:00", end: "18:00" }))
+  );
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryRow[] | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/barbers/${user.id}/schedule`)
+      .then((r) => (r.ok ? r.json() : { schedule: [] }))
+      .then((d: { schedule: ShiftRow[] }) => {
+        setDays((prev) => {
+          const next = prev.map((x) => ({ ...x }));
+          for (const row of d.schedule) {
+            next[row.dayOfWeek] = { working: true, start: row.shiftStart, end: row.shiftEnd };
+          }
+          return next;
+        });
+      })
+      .finally(() => setLoading(false));
+  }, [user.id]);
+
+  const loadHistory = () => {
+    fetch(`/api/barbers/${user.id}/schedule/history`)
+      .then((r) => (r.ok ? r.json() : { history: [] }))
+      .then((d: { history: HistoryRow[] }) => setHistory(d.history));
+  };
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    const schedule = days
+      .map((d, dayOfWeek) => ({ dayOfWeek, shiftStart: d.start, shiftEnd: d.end, working: d.working }))
+      .filter((d) => d.working)
+      .map(({ dayOfWeek, shiftStart, shiftEnd }) => ({ dayOfWeek, shiftStart, shiftEnd }));
+    const res = await fetch(`/api/barbers/${user.id}/schedule`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(schedule),
+    });
+    setBusy(false);
+    if (res.ok) return onClose(`${user.name}'s weekly shifts are saved`);
+    const d = await res.json().catch(() => ({}));
+    setErr(d.error ?? "Could not save that");
+  };
+
+  return (
+    <Modal title={`${user.name}'s weekly shifts`}
+           subtitle="Recurring — this applies every week from now on, until you change it again. Days left off mean a day off.">
+      {loading ? (
+        <p className="mt-4 text-sm text-charcoal/45">Loading…</p>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {DAYS.map((label, i) => (
+            <div key={label} className="flex items-center gap-3">
+              <label className="flex w-24 shrink-0 items-center gap-2 text-sm font-semibold text-ink">
+                <input
+                  type="checkbox"
+                  checked={days[i]!.working}
+                  onChange={(e) => setDays((prev) => prev.map((d, j) => (j === i ? { ...d, working: e.target.checked } : d)))}
+                  className="accent-gold-dim"
+                />
+                {label}
+              </label>
+              <input
+                type="time"
+                disabled={!days[i]!.working}
+                value={days[i]!.start}
+                onChange={(e) => setDays((prev) => prev.map((d, j) => (j === i ? { ...d, start: e.target.value } : d)))}
+                className={`${field} disabled:opacity-35`}
+              />
+              <span className="text-charcoal/40">–</span>
+              <input
+                type="time"
+                disabled={!days[i]!.working}
+                value={days[i]!.end}
+                onChange={(e) => setDays((prev) => prev.map((d, j) => (j === i ? { ...d, end: e.target.value } : d)))}
+                className={`${field} disabled:opacity-35`}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <p className="mt-2 text-sm text-st-cancel">{err}</p>}
+
+      <div className="mt-4 border-t border-black/8 pt-3">
+        {history === null ? (
+          <button onClick={loadHistory} className="text-xs font-semibold text-charcoal/50 underline hover:text-ink">
+            View change history
+          </button>
+        ) : (
+          <div className="thin-scroll max-h-32 space-y-1.5 overflow-y-auto text-xs text-charcoal/55">
+            {history.length === 0 && <p>No changes recorded yet.</p>}
+            {history.map((h, i) => (
+              <p key={i}>
+                {DAYS[h.dayOfWeek]} {h.shiftStart}–{h.shiftEnd} — replaced {new Date(h.changedAt).toLocaleString("en-AE", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                {h.changedBy ? ` by ${h.changedBy}` : ""}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Actions onCancel={() => onClose(null)} onSubmit={submit} busy={busy} label="Save shifts" />
     </Modal>
   );
 }
