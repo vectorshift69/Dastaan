@@ -48,6 +48,10 @@ export type Appointment = {
   serviceIds: string[];
   start: string; // "HH:MM"
   minutes: number;
+  /** set only when checkout happened before the booked slot's estimated
+   *  end — "HH:MM" the visit actually finished. The calendar draws the
+   *  card only this long, freeing the rest of the slot to be booked. */
+  completed?: string;
   status: BookingStatus;
   online: boolean; // true = client self-booked (⟳), false = booked with barber (✓)
   paid: boolean;

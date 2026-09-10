@@ -833,6 +833,14 @@ export async function migrate() {
     ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
     ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
       CHECK (status IN ('Booked','Confirmed','Arrived','Started','Completed','No Show','Cancelled'));
+
+    /* When checkout happens before the booked slot would have ended, this is
+       the moment it actually finished — not booking.minutes, which is only
+       ever the estimate made at booking time. The availability engine uses
+       whichever ends earlier, so a barber who runs early frees the rest of
+       their slot for someone else to book, instead of it sitting blocked
+       until the original estimated end time. */
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS completed_at TEXT;
   `);
 }
 

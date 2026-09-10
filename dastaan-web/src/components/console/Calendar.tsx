@@ -108,7 +108,15 @@ export default function Calendar({
                 {/* appointment cards */}
                 {appts.map((a) => {
                   const top = (toMin(a.start) - DAY_START) * PX_PER_MIN;
-                  const h = a.minutes * PX_PER_MIN;
+                  /* Checked out early — the card only spans the actual visit,
+                     not the original estimate, so the freed remainder of the
+                     slot reads as open (same blank space any free chair has). */
+                  const scheduledEnd = toMin(a.start) + a.minutes;
+                  const completedMin = a.completed !== undefined ? Math.max(toMin(a.start), toMin(a.completed)) : undefined;
+                  const ranShort = completedMin !== undefined && completedMin < scheduledEnd;
+                  const effectiveEnd = ranShort ? completedMin : scheduledEnd;
+                  const shownMinutes = Math.max(15, effectiveEnd - toMin(a.start));
+                  const h = shownMinutes * PX_PER_MIN;
                   const color = STATUS_COLOR[a.status];
                   const muted = a.status === "Cancelled" || a.status === "No Show";
                   const selected = selectedId === a.id;
@@ -123,8 +131,8 @@ export default function Calendar({
                     >
                       <div className="px-2.5 py-1.5">
                         <div className="flex items-center justify-between gap-1">
-                          <span className="text-[10px] font-bold tracking-wide text-charcoal/55">
-                            {toLabel(toMin(a.start))} – {toLabel(toMin(a.start) + a.minutes)}
+                          <span className="text-[10px] font-bold tracking-wide text-charcoal/55" title={ranShort ? "Checked out early — rest of the slot is free" : undefined}>
+                            {toLabel(toMin(a.start))} – {toLabel(effectiveEnd)}
                           </span>
                           <span className="flex items-center gap-1">
                             {/* booking type: ✓ with barber · ⟳ online */}

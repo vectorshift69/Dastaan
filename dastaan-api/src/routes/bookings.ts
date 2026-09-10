@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db, uid, now } from "../db.js";
 import { requireAuth, requireRole, audit } from "../security.js";
-import { salonToday, isDate, isMonth } from "../time.js";
+import { salonToday, salonNow, isDate, isMonth } from "../time.js";
 import { onBookingCreated, onBookingCancelled, onServicePaid, onInvoiceIssued, drainDue } from "../notify/service.js";
 import { createInvoiceForBooking, invoiceToApi } from "../invoices.js";
 import { renderInvoicePdf } from "../invoice-pdf.js";
@@ -63,7 +63,7 @@ type BookingRow = {
   id: string; branch_id: string; barber_id: string; client_id: string | null;
   client_name: string; client_phone: string | null; service_ids: string;
   starts_at: string; minutes: number; status: string; online: number; paid: number;
-  cancel_reason: string | null; payment_intent_id: string | null;
+  cancel_reason: string | null; payment_intent_id: string | null; completed_at: string | null;
 };
 
 const toApi = async (b: BookingRow) => {
@@ -81,6 +81,10 @@ const toApi = async (b: BookingRow) => {
     online: !!b.online,
     paid: !!b.paid,
     cancelReason: b.cancel_reason ?? undefined,
+    /* set only by an early checkout — when the visit actually finished
+       before the booked slot's estimated end. Lets the calendar draw the
+       card shorter and shows staff exactly when the chair freed up. */
+    completedAt: b.completed_at ?? undefined,
     loyalty: loyalty ? { tier: loyalty.tier, points: loyalty.points } : undefined,
     paymentIntentId: b.payment_intent_id ?? undefined,
   };
@@ -611,7 +615,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
       await redeemCoupon(couponId, `invoice:${invoice.id}`, couponDiscount, owner0.client_id);
     }
 
-    await db.prepare("UPDATE bookings SET paid = 1, status = 'Completed', updated_at = ? WHERE id = ?").run(now(), id);
+    await db.prepare("UPDATE bookings SET paid = 1, status = 'Completed', completed_at = ?, updated_at = ? WHERE id = ?").run(salonNow(), now(), id);
     await logEvent(id, s.sub, s.role, "checkout", `${invoice.invoiceNo} · AED ${invoice.total}`);
     await audit("checkout_completed", { actorId: s.sub, actorRole: s.role, detail: `${id} ${invoice.invoiceNo}`, ip: req.ip });
 
@@ -729,18 +733,27 @@ const minutesOfDay = (startsAt: string) => {
 
 type Busy = { from: number; to: number };
 
-/** Everything already in a barber's chair on one day, as minute ranges. */
+/** Everything already in a barber's chair on one day, as minute ranges.
+ *  A visit checked out before its booked slot would have ended frees the
+ *  remainder of that slot — completed_at, not the original estimate, is
+ *  what actually blocks the chair. Still running, or finished on or after
+ *  the estimate, and the full booked window applies as before. */
 async function busyRanges(barberId: string, date: string): Promise<Busy[]> {
   const rows = await db
     .prepare(
-      `SELECT starts_at, minutes FROM bookings
+      `SELECT starts_at, minutes, completed_at FROM bookings
        WHERE barber_id = ? AND status NOT IN ('Cancelled','No Show')
          AND starts_at >= ? AND starts_at < ?`
     )
-    .all(barberId, `${date}T00:00`, `${date}T99`) as { starts_at: string; minutes: number }[];
+    .all(barberId, `${date}T00:00`, `${date}T99`) as { starts_at: string; minutes: number; completed_at: string | null }[];
   return rows.map((r) => {
     const from = minutesOfDay(r.starts_at);
-    return { from, to: from + Number(r.minutes) };
+    const scheduledTo = from + Number(r.minutes);
+    if (r.completed_at && dayOf(r.completed_at) === date) {
+      const actualTo = minutesOfDay(r.completed_at);
+      if (actualTo < scheduledTo) return { from, to: Math.max(from, actualTo) };
+    }
+    return { from, to: scheduledTo };
   });
 }
 

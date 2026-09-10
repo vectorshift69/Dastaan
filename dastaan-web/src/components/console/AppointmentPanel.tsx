@@ -57,6 +57,14 @@ export default function AppointmentPanel({
     return Math.round((price * tipPct) / 100 * 100) / 100;
   }, [tipPct, customTip, price]);
 
+  /* Checked out early — the actual finish time, clamped so a completed_at
+     that somehow predates the booking's start (shouldn't happen, but never
+     trust a timestamp blindly) can't render a backwards-looking range. */
+  const apptScheduledEnd = toMin(appt.start) + appt.minutes;
+  const apptCompletedMin = appt.completed !== undefined ? Math.max(toMin(appt.start), toMin(appt.completed)) : undefined;
+  const apptRanShort = apptCompletedMin !== undefined && apptCompletedMin < apptScheduledEnd;
+  const apptEffectiveEnd = apptRanShort ? apptCompletedMin! : apptScheduledEnd;
+
   const [invoice, setInvoice] = useState<{ invoiceNo: string; vat?: number; stripeRef?: string } | null>(null);
   const [paying, setPaying] = useState(false);
 
@@ -201,8 +209,11 @@ export default function AppointmentPanel({
               <div>
                 <p className="text-[11px] font-bold tracking-wider text-charcoal/45 uppercase">Today</p>
                 <p className="text-sm font-bold text-ink">
-                  {toLabel(toMin(appt.start))} – {toLabel(toMin(appt.start) + appt.minutes)}
+                  {toLabel(toMin(appt.start))} – {toLabel(apptEffectiveEnd)}
                 </p>
+                {apptRanShort && (
+                  <p className="mt-0.5 text-[11px] text-charcoal/45">Checked out early — rest of the slot is free</p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-[11px] font-bold tracking-wider text-charcoal/45 uppercase">
