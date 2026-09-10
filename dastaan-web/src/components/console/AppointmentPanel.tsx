@@ -149,8 +149,10 @@ export default function AppointmentPanel({
         }).catch(() => null)
       : null;
     setInvoice(result ?? { invoiceNo: `INV-DEMO-${appt.id.toUpperCase()}` });
-    /* the server sets status = Confirmed + paid = true; just update paid locally */
-    onUpdate({ paid: true });
+    /* mirror what the server just did — paid = true and status = Completed —
+       so reopening this appointment later doesn't show its old pre-checkout
+       status (e.g. "Arrived") with no indication it was ever paid. */
+    onUpdate({ paid: true, status: "Completed" });
     setPaying(false);
     setMode("done");
   };
@@ -201,6 +203,17 @@ export default function AppointmentPanel({
 
             {/* status pipeline */}
             <p className="mt-6 text-[11px] font-bold tracking-[0.18em] text-charcoal/45 uppercase">Service status</p>
+            {appt.status === "Completed" ? (
+              /* Checkout already moved this past the pre-visit pipeline — there is
+                 nothing left to pick, so show the terminal state instead of buttons
+                 that would all render inactive. */
+              <div
+                className="mt-3 rounded-lg border px-3 py-2.5 text-center text-[13px] font-semibold text-white"
+                style={{ background: STATUS_COLOR.Completed, borderColor: STATUS_COLOR.Completed }}
+              >
+                ✓ Completed
+              </div>
+            ) : (
             <div className="mt-3 grid grid-cols-2 gap-2">
               {PIPELINE.map((s) => {
                 const active = appt.status === s;
@@ -218,6 +231,8 @@ export default function AppointmentPanel({
                 );
               })}
             </div>
+            )}
+            {appt.status !== "Completed" && (
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 onClick={() => onUpdate({ status: "No Show" })}
@@ -236,6 +251,7 @@ export default function AppointmentPanel({
                 Cancel…
               </button>
             </div>
+            )}
             {appt.status === "Cancelled" && appt.cancelReason && (
               <p className="mt-3 rounded-lg bg-st-cancel/8 px-4 py-2.5 text-xs text-st-cancel">
                 Reason: {appt.cancelReason}
@@ -643,6 +659,14 @@ export default function AppointmentPanel({
       {mode === "details" && appt.paid && (
         <div className="border-t border-[#eee9dd] px-6 py-4">
           <p className="text-center text-sm font-semibold text-st-started">● Paid — session complete</p>
+          <a
+            href={`/api/bookings/${appt.id}/invoice/pdf`}
+            download
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-ink/20 py-3 text-sm font-bold text-ink transition-colors hover:border-gold hover:text-gold-dim"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            Download invoice (PDF)
+          </a>
         </div>
       )}
       {mode === "checkout" && (

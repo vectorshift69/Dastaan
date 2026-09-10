@@ -317,6 +317,7 @@ export default function Console() {
               <Legend color="var(--color-st-confirmed)" label="Confirmed" />
               <Legend color="var(--color-st-arrived)" label="Arrived" />
               <Legend color="var(--color-st-started)" label="Started" />
+              <Legend color="var(--color-st-completed)" label="Completed" />
               <Legend color="var(--color-st-noshow)" label="No show" />
               <Legend color="var(--color-st-cancel)" label="Cancelled" />
               <span className="ml-2">✓ with barber · ⟳ online</span>

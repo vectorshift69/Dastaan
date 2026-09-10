@@ -429,7 +429,7 @@ const run = async () => {
            cancellations any salon has, so the reports aren't unrealistically clean */
         const roll = rnd();
         const served = roll < 0.9;
-        const status = served ? "Started" : roll < 0.95 ? "No Show" : "Cancelled";
+        const status = served ? "Completed" : roll < 0.95 ? "No Show" : "Cancelled";
         const online = chance(0.45) ? 1 : 0;
         const bookingId = uid();
         const createdAt = at(dayOffset(-back - int(1, 6)), "18:00");
@@ -656,18 +656,18 @@ const run = async () => {
   /* [barber, registered userId | null, walk-in index, services, start, status, online, paid] */
   const todays: [string, string | null, number, string[], string, string, number, number][] = [
     ["br1", null, 3, ["s1"], "10:15", "Arrived", 0, 0],
-    ["br1", "omar.f", -1, ["s2", "s4"], "12:00", "Confirmed", 1, 1],
+    ["br1", "omar.f", -1, ["s2", "s4"], "12:00", "Completed", 1, 1],
     ["br1", null, 17, ["s5"], "16:30", "Booked", 1, 0],
-    ["br2", null, 26, ["s3"], "10:30", "Started", 0, 1],
+    ["br2", null, 26, ["s3"], "10:30", "Completed", 0, 1],
     ["br2", "demo", -1, ["s3"], "13:30", "Confirmed", 1, 0],
-    ["br2", null, 41, ["s6"], "15:00", "Confirmed", 1, 1],
+    ["br2", null, 41, ["s6"], "15:00", "Completed", 1, 1],
     ["br3", null, 8, ["s1"], "11:00", "Confirmed", 0, 0],
     ["br3", "faizan.q", -1, ["s3", "s9"], "14:15", "Booked", 1, 0],
     ["br3", "kamal.h", -1, ["s4"], "17:40", "Booked", 0, 0],
     ["br4", "marwan.a", -1, ["s8", "s9"], "10:45", "No Show", 1, 0],
     ["br4", "yasser.z", -1, ["s2"], "13:00", "Confirmed", 0, 0],
     ["br4", null, 52, ["s10"], "16:00", "Booked", 1, 0],
-    ["br7", "hamza.s", -1, ["s2", "s4"], "11:30", "Confirmed", 1, 1],
+    ["br7", "hamza.s", -1, ["s2", "s4"], "11:30", "Completed", 1, 1],
     ["br7", null, 12, ["s10"], "15:00", "Booked", 0, 0],
     ["br8", "zaid.m", -1, ["s11"], "10:30", "Arrived", 1, 0],
     ["br8", "rashid.n", -1, ["s12"], "14:00", "Booked", 1, 0],

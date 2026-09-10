@@ -257,7 +257,7 @@ export async function migrate() {
     starts_at TEXT NOT NULL,
     minutes INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'Booked'
-      CHECK (status IN ('Booked','Confirmed','Arrived','Started','No Show','Cancelled')),
+      CHECK (status IN ('Booked','Confirmed','Arrived','Started','Completed','No Show','Cancelled')),
     online INTEGER NOT NULL DEFAULT 0,
     paid INTEGER NOT NULL DEFAULT 0,
     cancel_reason TEXT,
@@ -823,6 +823,16 @@ export async function migrate() {
     /* manufacturer/brand line, e.g. "ELEMIS", "Davroe" — separate from the
        supplier a product is bought from, which the app doesn't track. */
     ALTER TABLE products ADD COLUMN IF NOT EXISTS brand TEXT;
+
+    /* "Completed" — the terminal state a checkout moves a booking to.
+       Before this, checkout left a booking on whatever pre-visit status it
+       already had (typically "Arrived"), so a paid, finished appointment
+       still looked mid-visit on reopen. The CREATE TABLE above already has
+       Completed in its CHECK for a fresh database; a database that already
+       has the bookings table needs its constraint replaced to allow it too. */
+    ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+    ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
+      CHECK (status IN ('Booked','Confirmed','Arrived','Started','Completed','No Show','Cancelled'));
   `);
 }
 

@@ -13,7 +13,7 @@ import { moveStock } from "./inventory.js";
 import { createReviewInvite } from "./reviews.js";
 import { isBarberSuspended } from "./training.js";
 
-const STATUSES = ["Booked", "Confirmed", "Arrived", "Started", "No Show", "Cancelled"] as const;
+const STATUSES = ["Booked", "Confirmed", "Arrived", "Started", "Completed", "No Show", "Cancelled"] as const;
 
 const createSchema = z.object({
   branchId: z.string().min(1),
@@ -499,6 +499,11 @@ export default async function bookingRoutes(app: FastifyInstance) {
     if (status === "Cancelled" && !reason?.trim())
       return reply.code(400).send({ error: "A cancellation reason is required" });
 
+    /* A completed, paid, invoiced visit is locked — checkout is the only way
+       out of pre-visit statuses, so nothing routes back into one from here. */
+    if (b.status === "Completed")
+      return reply.code(409).send({ error: "This visit is already checked out and cannot be changed" });
+
     await db.prepare("UPDATE bookings SET status = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
       .run(status, status === "Cancelled" ? reason!.trim() : b.cancel_reason, now(), id);
     await logEvent(id, s.sub, s.role, `status:${status}`, status === "Cancelled" ? reason : undefined);
@@ -603,7 +608,7 @@ export default async function bookingRoutes(app: FastifyInstance) {
       await redeemCoupon(couponId, `invoice:${invoice.id}`, couponDiscount, owner0.client_id);
     }
 
-    await db.prepare("UPDATE bookings SET paid = 1, status = 'Confirmed', updated_at = ? WHERE id = ?").run(now(), id);
+    await db.prepare("UPDATE bookings SET paid = 1, status = 'Completed', updated_at = ? WHERE id = ?").run(now(), id);
     await logEvent(id, s.sub, s.role, "checkout", `${invoice.invoiceNo} · AED ${invoice.total}`);
     await audit("checkout_completed", { actorId: s.sub, actorRole: s.role, detail: `${id} ${invoice.invoiceNo}`, ip: req.ip });
 

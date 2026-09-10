@@ -36,6 +36,7 @@ export type BookingStatus =
   | "Confirmed"
   | "Arrived"
   | "Started"
+  | "Completed"
   | "No Show"
   | "Cancelled";
 
@@ -152,6 +153,7 @@ export const STATUS_COLOR: Record<BookingStatus, string> = {
   Confirmed: "var(--color-st-confirmed)",
   Arrived: "var(--color-st-arrived)",
   Started: "var(--color-st-started)",
+  Completed: "var(--color-st-completed)",
   "No Show": "var(--color-st-noshow)",
   Cancelled: "var(--color-st-cancel)",
 };
