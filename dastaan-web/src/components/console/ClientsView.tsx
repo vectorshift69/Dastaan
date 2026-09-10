@@ -22,10 +22,10 @@ type Detail = {
 };
 
 const TIER_COLOR: Record<SpendTier["tier"], string> = {
-  Bronze: "border-[#b08d57]/50 bg-[#b08d57]/10 text-[#8a6a3d]",
-  Silver: "border-[#9ea3ab]/50 bg-[#9ea3ab]/10 text-[#6b7078]",
-  Gold: "border-gold/50 bg-gold/10 text-gold-dim",
-  Platinum: "border-[#6b6fb8]/50 bg-[#6b6fb8]/10 text-[#4d5099]",
+  Bronze: "#b08d57",
+  Silver: "#9ea3ab",
+  Gold: "#c9a227",
+  Platinum: "#6b6fb8",
 };
 
 export default function ClientsView() {
@@ -133,7 +133,10 @@ export default function ClientsView() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {c.spendTier ? (
-                      <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold tracking-wider uppercase ${TIER_COLOR[c.spendTier.tier]}`}>
+                      <span
+                        className="rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase"
+                        style={{ background: TIER_COLOR[c.spendTier.tier] }}
+                      >
                         {c.spendTier.tier}
                       </span>
                     ) : <span className="text-charcoal/35">—</span>}
@@ -181,7 +184,10 @@ export default function ClientsView() {
                     ` · ${CURRENCY} ${(selected.spendTier.nextTier.at - selected.spendTier.spend).toLocaleString()} to ${selected.spendTier.nextTier.name}`}
                 </p>
               </div>
-              <span className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wider uppercase ${TIER_COLOR[selected.spendTier.tier]}`}>
+              <span
+                className="rounded-full px-3 py-1 text-[11px] font-bold tracking-wider text-white uppercase"
+                style={{ background: TIER_COLOR[selected.spendTier.tier] }}
+              >
                 {selected.spendTier.tier}
               </span>
             </div>
