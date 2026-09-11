@@ -26,14 +26,14 @@ import {
 
 /* API booking → console Appointment (start "HH:MM" from ISO) */
 type ApiBooking = {
-  id: string; barberId: string; client: string; phone: string;
+  id: string; barberId: string; clientId?: string; client: string; phone: string;
   serviceIds: string[]; startsAt: string; minutes: number;
   status: BookingStatus; online: boolean; paid: boolean; cancelReason?: string;
   completedAt?: string;
   loyalty?: { tier: "Gold" | "Silver" | "Member"; points: number };
 };
 const fromApi = (b: ApiBooking): Appointment => ({
-  id: b.id, barberId: b.barberId, client: b.client, phone: b.phone,
+  id: b.id, barberId: b.barberId, clientId: b.clientId, client: b.client, phone: b.phone,
   serviceIds: b.serviceIds, start: b.startsAt.slice(11, 16), minutes: b.minutes,
   status: b.status, online: b.online, paid: b.paid, cancelReason: b.cancelReason,
   completed: b.completedAt?.slice(11, 16),

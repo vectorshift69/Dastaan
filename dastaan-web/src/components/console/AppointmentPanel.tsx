@@ -576,12 +576,14 @@ export default function AppointmentPanel({
                             </p>
                           </button>
                           <button
-                            onClick={() => setCashAction("wallet")}
-                            className={`rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all ${cashAction === "wallet" ? "border-ink bg-ink text-gold-2" : "border-black/12 hover:border-black/35"}`}
+                            onClick={() => appt.clientId && setCashAction("wallet")}
+                            disabled={!appt.clientId}
+                            title={appt.clientId ? undefined : "This client has no account to hold a wallet balance"}
+                            className={`rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all ${cashAction === "wallet" ? "border-ink bg-ink text-gold-2" : !appt.clientId ? "cursor-not-allowed border-black/12 opacity-40" : "border-black/12 hover:border-black/35"}`}
                           >
                             <p>Add to wallet</p>
                             <p className={`font-normal ${cashAction === "wallet" ? "text-white/60" : "text-charcoal/45"}`}>
-                              Credit {appt.client.split(" ")[0]}
+                              {appt.clientId ? `Credit ${appt.client.split(" ")[0]}` : "No account on file"}
                             </p>
                           </button>
                         </div>

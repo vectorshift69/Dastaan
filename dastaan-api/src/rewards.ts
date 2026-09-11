@@ -52,6 +52,20 @@ export async function recordVisit(clientId: string, bookingId: string): Promise<
   return 0;
 }
 
+/** Cash change the client asked staff to hold toward a future visit, added
+ *  straight to their store-credit balance at checkout. A separate ledger
+ *  reason from the automatic 5-visit reward keeps the two distinguishable
+ *  in a client's transaction history. */
+export async function creditWallet(clientId: string, amount: number, bookingId: string): Promise<void> {
+  if (amount <= 0) return;
+  const acc = await ensureCreditAccount(clientId);
+  await db.prepare("UPDATE client_credit_accounts SET balance = balance + ? WHERE id = ?").run(amount, acc.id);
+  await db.prepare(
+    `INSERT INTO client_credit_transactions (id, account_id, delta, reason, booking_id, created_at)
+     VALUES (?,?,?,?,?,?)`
+  ).run(uid(), acc.id, amount, "cash_held_at_checkout", bookingId, now());
+}
+
 export async function creditBalanceFor(clientId: string): Promise<{
   balance: number;
   visitCount: number;

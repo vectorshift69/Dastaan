@@ -7,7 +7,7 @@ import { onBookingCreated, onBookingCancelled, onServicePaid, onInvoiceIssued, d
 import { createInvoiceForBooking, invoiceToApi } from "../invoices.js";
 import { renderInvoicePdf } from "../invoice-pdf.js";
 import { earnPoints, loyaltyForClient } from "../loyalty.js";
-import { recordVisit } from "../rewards.js";
+import { recordVisit, creditWallet } from "../rewards.js";
 import { checkCoupon, redeemCoupon } from "../coupons.js";
 import { moveStock } from "./inventory.js";
 import { createReviewInvite } from "./reviews.js";
@@ -72,6 +72,10 @@ const toApi = async (b: BookingRow) => {
     id: b.id,
     branchId: b.branch_id,
     barberId: b.barber_id,
+    /* only present for a signed-in client's own booking — a desk walk-in has
+       no account to hold a wallet balance against, so checkout needs this to
+       know whether "add change to wallet" is even possible. */
+    clientId: b.client_id ?? undefined,
     client: b.client_name,
     phone: b.client_phone ?? "",
     serviceIds: JSON.parse(b.service_ids) as string[],
@@ -554,14 +558,19 @@ export default async function bookingRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
 
-    const b = await db.prepare("SELECT branch_id, status FROM bookings WHERE id = ?").get(id) as
-      | { branch_id: string; status: string }
+    const b = await db.prepare("SELECT branch_id, status, client_id FROM bookings WHERE id = ?").get(id) as
+      | { branch_id: string; status: string; client_id: string | null }
       | undefined;
     if (!b) return reply.code(404).send({ error: "Booking not found" });
     if (s.role === "admin" && b.branch_id !== s.branchId)
       return reply.code(403).send({ error: "Wrong branch" });
     if (b.status === "Cancelled" || b.status === "No Show")
       return reply.code(409).send({ error: `Cannot check out a ${b.status.toLowerCase()} booking` });
+    /* a wallet balance lives on a client account — a desk walk-in with no
+       account has nowhere for it to go, so fail loudly here instead of
+       telling the desk "added to wallet" while nothing was actually saved */
+    if ((parsed.data.cashToWallet ?? 0) > 0 && !b.client_id)
+      return reply.code(400).send({ error: "This client has no account to hold a wallet balance — tip the change or hand it back instead" });
 
     // products sold at the desk — priced from the catalog, stock checked
     const productLines: { productId: string; name: string; qty: number; price: number }[] = [];
@@ -628,6 +637,10 @@ export default async function bookingRoutes(app: FastifyInstance) {
     const pointsEarned = owner.client_id ? await earnPoints(owner.client_id, id, invoice.gross) : 0;
     // every 5th completed visit earns AED 25 store credit, automatically
     const creditEarned = owner.client_id ? await recordVisit(owner.client_id, id) : 0;
+    // cash change the client asked staff to hold toward a future visit
+    if (owner.client_id && (parsed.data.cashToWallet ?? 0) > 0) {
+      await creditWallet(owner.client_id, parsed.data.cashToWallet!, id);
+    }
 
     return reply.code(201).send({ ...invoice, pointsEarned, creditEarned });
   });

@@ -43,6 +43,10 @@ export type BookingStatus =
 export type Appointment = {
   id: string;
   barberId: string;
+  /** only present for a signed-in client's own booking — a desk walk-in has
+   *  no account, so features that need one (like wallet credit) must check
+   *  this rather than assume every appointment has a client behind it. */
+  clientId?: string;
   client: string;
   phone: string;
   serviceIds: string[];
