@@ -1,21 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CURRENCY, branches } from "@/lib/data";
+import { CURRENCY, branches, barbers } from "@/lib/data";
 
 type Sales = {
-  from: string; to: string; branchId: string;
+  from: string; to: string; branchId: string; barberId: string;
   totals: { invoices: number; revenue: number; tips: number; vat: number; discounts: number };
   byDay: { date: string; revenue: number; count: number }[];
   byMethod: { method: string; revenue: number; count: number }[];
   byBranch: { branchId: string; revenue: number; count: number }[];
+  byBarber: { barberId: string; name: string; revenue: number; count: number }[];
   topServices: { name: string; count: number; revenue: number }[];
 };
 
 const PRESETS = [
   { label: "Today", days: 0 },
   { label: "7 days", days: 6 },
-  { label: "30 days", days: 29 },
+  { label: "This month", days: -1 }, // -1 = special-cased below
   { label: "90 days", days: 89 },
 ];
 
@@ -23,16 +24,33 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 export default function ReportsView() {
   const [days, setDays] = useState(6);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [barberId, setBarberId] = useState("");
   const [data, setData] = useState<Sales | null>(null);
   const [denied, setDenied] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-  useEffect(() => {
+  /* the resolved from/to actually sent to the API — a custom range (either
+     date typed in) wins over the day-count presets entirely */
+  const range = (() => {
+    if (customFrom || customTo) {
+      const to = customTo || iso(new Date());
+      const from = customFrom || to;
+      return { from, to };
+    }
     const to = new Date();
     const from = new Date();
-    from.setDate(to.getDate() - days);
-    const params = new URLSearchParams({ from: iso(from), to: iso(to) });
+    if (days === -1) from.setDate(1); // this month, from the 1st
+    else from.setDate(to.getDate() - days);
+    return { from: iso(from), to: iso(to) };
+  })();
+
+  useEffect(() => {
+    const params = new URLSearchParams({ from: range.from, to: range.to });
     if (branchId) params.set("branchId", branchId);
+    if (barberId) params.set("barberId", barberId);
     fetch(`/api/reports/sales?${params}`)
       .then(async (r) => {
         if (r.status === 403 || r.status === 401) { setDenied(true); return; }
@@ -40,7 +58,27 @@ export default function ReportsView() {
         setData(await r.json());
       })
       .catch(() => setDenied(true));
-  }, [days, branchId]);
+  }, [range.from, range.to, branchId, barberId]);
+
+  const exportXlsx = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ from: range.from, to: range.to });
+      if (branchId) params.set("branchId", branchId);
+      if (barberId) params.set("barberId", barberId);
+      const res = await fetch(`/api/reports/sales/export?${params}`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dastaan-sales-${range.from}_to_${range.to}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (denied)
     return (
@@ -57,24 +95,56 @@ export default function ReportsView() {
         {PRESETS.map((p) => (
           <button
             key={p.label}
-            onClick={() => setDays(p.days)}
+            onClick={() => { setDays(p.days); setCustomFrom(""); setCustomTo(""); }}
             className={`rounded-full px-4 py-1.5 text-[13px] font-bold transition-colors ${
-              days === p.days ? "bg-ink text-gold-2" : "border border-black/12 text-charcoal/70 hover:border-black/35"
+              !customFrom && !customTo && days === p.days ? "bg-ink text-gold-2" : "border border-black/12 text-charcoal/70 hover:border-black/35"
             }`}
           >
             {p.label}
           </button>
         ))}
+        <div className="flex items-center gap-1.5 rounded-full border border-black/12 bg-white px-3 py-1">
+          <input
+            type="date"
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            className="w-[120px] bg-transparent text-[12.5px] outline-none"
+          />
+          <span className="text-charcoal/35">–</span>
+          <input
+            type="date"
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            className="w-[120px] bg-transparent text-[12.5px] outline-none"
+          />
+        </div>
+        <select
+          value={barberId}
+          onChange={(e) => setBarberId(e.target.value)}
+          className="rounded-full border border-black/12 bg-white px-4 py-1.5 text-[13px] font-semibold outline-none"
+        >
+          <option value="">All barbers</option>
+          {barbers.map((b) => (
+            <option key={b.id} value={b.id}>{b.name}</option>
+          ))}
+        </select>
         <select
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}
-          className="ml-auto rounded-full border border-black/12 bg-white px-4 py-1.5 text-[13px] font-semibold outline-none"
+          className="rounded-full border border-black/12 bg-white px-4 py-1.5 text-[13px] font-semibold outline-none"
         >
           <option value="">All branches</option>
           {branches.map((b) => (
             <option key={b.id} value={b.id}>{b.area}</option>
           ))}
         </select>
+        <button
+          onClick={exportXlsx}
+          disabled={exporting}
+          className="btn-gold ml-auto rounded-full px-5 py-1.5 text-[13px] disabled:opacity-50"
+        >
+          {exporting ? "Exporting…" : "⬇ Export to Excel"}
+        </button>
       </div>
 
       {/* KPI cards */}
@@ -152,6 +222,17 @@ export default function ReportsView() {
               )}
             </tbody>
           </table>
+        </section>
+
+        {/* by barber */}
+        <section className="rounded-2xl border border-black/8 bg-white p-5">
+          <h3 className="text-[11px] font-bold tracking-[0.18em] text-charcoal/45 uppercase">By barber</h3>
+          <div className="mt-3 space-y-2">
+            {data.byBarber.map((b) => (
+              <BarRow key={b.barberId} label={b.name} value={b.revenue} max={data.totals.revenue} sub={`${b.count}×`} />
+            ))}
+            {data.byBarber.length === 0 && <p className="text-sm text-charcoal/45">No sales yet in this period.</p>}
+          </div>
         </section>
       </div>
     </div>
