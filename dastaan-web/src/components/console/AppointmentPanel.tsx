@@ -71,7 +71,14 @@ export default function AppointmentPanel({
   /* A paid booking doesn't always have an invoice row — some were marked paid
      directly rather than through the full checkout (older data, quick
      corrections). Check before offering a download that would otherwise 404. */
-  const [pastInvoice, setPastInvoice] = useState<{ paymentMethod: string; splitDetail?: { cash: number; card: number } } | null | undefined>(undefined);
+  type PastInvoice = {
+    invoiceNo: string;
+    items: { name: string; price: number }[];
+    gross: number; discount: number; tip: number; vat: number; total: number;
+    paymentMethod: string; splitDetail?: { cash: number; card: number };
+    barberName: string; issuedByName: string;
+  };
+  const [pastInvoice, setPastInvoice] = useState<PastInvoice | null | undefined>(undefined);
   useEffect(() => {
     if (mode !== "details" || !appt.paid) { setPastInvoice(undefined); return; }
     let cancelled = false;
@@ -688,12 +695,33 @@ export default function AppointmentPanel({
         <div className="border-t border-[#eee9dd] px-6 py-4">
           <p className="text-center text-sm font-semibold text-st-started">● Paid — session complete</p>
           {pastInvoice && (
-            <p className="mt-1 text-center text-xs text-charcoal/55">
-              {pastInvoice.paymentMethod}
+            <div className="mt-3 rounded-xl bg-paper px-4 py-3 text-xs">
+              <div className="flex items-center justify-between text-charcoal/45">
+                <span className="font-semibold tracking-wide">{pastInvoice.invoiceNo}</span>
+                <span>{pastInvoice.paymentMethod}</span>
+              </div>
+              <div className="my-2 h-px bg-black/8" />
+              {pastInvoice.items.map((it, i) => (
+                <Row key={i} k={it.name} v={`${CURRENCY} ${it.price.toFixed(2)}`} />
+              ))}
+              {pastInvoice.discount > 0 && <Row k="Discount" v={`− ${CURRENCY} ${pastInvoice.discount.toFixed(2)}`} />}
+              <Row k="VAT" v={`${CURRENCY} ${pastInvoice.vat.toFixed(2)}`} />
+              {pastInvoice.tip > 0 && <Row k="Tip" v={`${CURRENCY} ${pastInvoice.tip.toFixed(2)}`} />}
               {pastInvoice.splitDetail && (
-                <> — Cash {CURRENCY} {pastInvoice.splitDetail.cash.toFixed(2)} · Card {CURRENCY} {pastInvoice.splitDetail.card.toFixed(2)}</>
+                <>
+                  <Row k="  Cash portion" v={`${CURRENCY} ${pastInvoice.splitDetail.cash.toFixed(2)}`} />
+                  <Row k="  Card portion" v={`${CURRENCY} ${pastInvoice.splitDetail.card.toFixed(2)}`} />
+                </>
               )}
-            </p>
+              <div className="my-2 h-px bg-black/8" />
+              <div className="flex items-center justify-between font-bold text-ink">
+                <span>Total</span>
+                <span>{CURRENCY} {pastInvoice.total.toFixed(2)}</span>
+              </div>
+              <div className="my-2 h-px bg-black/8" />
+              <Row k="Barber" v={pastInvoice.barberName} />
+              <Row k="Served by" v={pastInvoice.issuedByName} />
+            </div>
           )}
           {hasInvoice === true && (
             <a
