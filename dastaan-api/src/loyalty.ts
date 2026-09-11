@@ -2,12 +2,18 @@
 /* Loyalty program (PRD 6): digital card, QR scannable at a webcam-    */
 /* equipped POS, points earned automatically at checkout, Apple Wallet */
 /* pass when Apple certificates are configured.                        */
-/* Earn rule: 1 point per AED of the service total (gross).            */
-/* Tiers by lifetime points: Member < 2,000 ≤ Silver < 5,000 ≤ Gold.   */
+/* Earn rule: 1 point per AED of the service total (gross) — points    */
+/* remain a redeemable currency of their own. The TIER shown alongside */
+/* them, though, is the same Bronze/Silver/Gold/Platinum spend tier as */
+/* the admin Clients view (tiers.ts) — there used to be a second,      */
+/* points-derived Member/Silver/Gold tier here, which meant a client   */
+/* could be shown two different, disagreeing tiers depending on which  */
+/* screen they looked at. One spend-based tier now, everywhere.        */
 /* ------------------------------------------------------------------ */
 
 import { randomBytes } from "node:crypto";
 import { db, uid, now } from "./db.js";
+import { tierForSpend, lifetimeSpend, type SpendTier } from "./tiers.js";
 
 export type LoyaltyAccount = {
   id: string;
@@ -15,22 +21,22 @@ export type LoyaltyAccount = {
   qrToken: string;
   points: number;
   lifetimePoints: number;
-  tier: "Member" | "Silver" | "Gold";
+  tier: SpendTier;
 };
-
-export const tierFor = (lifetime: number): LoyaltyAccount["tier"] =>
-  lifetime >= 5000 ? "Gold" : lifetime >= 2000 ? "Silver" : "Member";
 
 type Row = { id: string; client_id: string; qr_token: string; points: number; lifetime_points: number };
 
-const toApi = (r: Row): LoyaltyAccount => ({
-  id: r.id,
-  clientId: r.client_id,
-  qrToken: r.qr_token,
-  points: r.points,
-  lifetimePoints: r.lifetime_points,
-  tier: tierFor(r.lifetime_points),
-});
+async function toApi(r: Row): Promise<LoyaltyAccount> {
+  const spend = await lifetimeSpend(r.client_id);
+  return {
+    id: r.id,
+    clientId: r.client_id,
+    qrToken: r.qr_token,
+    points: r.points,
+    lifetimePoints: r.lifetime_points,
+    tier: tierForSpend(spend),
+  };
+}
 
 export async function ensureAccount(clientId: string): Promise<LoyaltyAccount> {
   const existing = await db
@@ -54,7 +60,7 @@ export async function findByToken(token: string): Promise<(LoyaltyAccount & { cl
     )
     .get(token) as (Row & { client_name: string; client_phone: string | null }) | undefined;
   if (!r) return null;
-  return { ...toApi(r), clientName: r.client_name, clientPhone: r.client_phone };
+  return { ...(await toApi(r)), clientName: r.client_name, clientPhone: r.client_phone };
 }
 
 export async function earnPoints(clientId: string, bookingId: string, amountAed: number): Promise<number> {
@@ -80,5 +86,5 @@ export async function recentTransactions(accountId: string, limit = 10) {
 
 export async function loyaltyForClient(clientId: string): Promise<LoyaltyAccount | null> {
   const r = await db.prepare("SELECT * FROM loyalty_accounts WHERE client_id = ?").get(clientId) as Row | undefined;
-  return r ? toApi(r) : null;
+  return r ? await toApi(r) : null;
 }

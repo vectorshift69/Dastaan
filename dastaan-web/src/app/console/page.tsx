@@ -30,7 +30,7 @@ type ApiBooking = {
   serviceIds: string[]; startsAt: string; minutes: number;
   status: BookingStatus; online: boolean; paid: boolean; cancelReason?: string;
   completedAt?: string;
-  loyalty?: { tier: "Gold" | "Silver" | "Member"; points: number };
+  loyalty?: { tier: "Bronze" | "Silver" | "Gold" | "Platinum"; points: number };
 };
 const fromApi = (b: ApiBooking): Appointment => ({
   id: b.id, barberId: b.barberId, clientId: b.clientId, client: b.client, phone: b.phone,

@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { readFileSync, existsSync } from "node:fs";
 import { requireAuth, requireRole, audit } from "../security.js";
 import { ensureAccount, findByToken, recentTransactions } from "../loyalty.js";
+import { spendTierFor } from "../tiers.js";
 
 const QR_PREFIX = "DSTN:"; // QR payload = DSTN:<token>
 
@@ -15,15 +16,14 @@ export default async function loyaltyRoutes(app: FastifyInstance) {
     const s = await requireRole(req, reply, ["client"]);
     if (!s) return;
     const acc = await ensureAccount(s.sub);
+    const { spend, nextTier } = await spendTierFor(s.sub);
     return {
       tier: acc.tier,
       points: acc.points,
       lifetimePoints: acc.lifetimePoints,
+      spend,
       qrPayload: QR_PREFIX + acc.qrToken,
-      nextTier:
-        acc.tier === "Gold" ? null
-        : acc.tier === "Silver" ? { name: "Gold", at: 5000 }
-        : { name: "Silver", at: 2000 },
+      nextTier,
     };
   });
 

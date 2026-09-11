@@ -5,17 +5,19 @@ import { useEffect, useState } from "react";
 import Logo, { LogoWord } from "@/components/Logo";
 
 type Card = {
-  tier: "Member" | "Silver" | "Gold";
+  tier: "Bronze" | "Silver" | "Gold" | "Platinum";
   points: number;
   lifetimePoints: number;
+  spend: number;
   qrPayload: string;
   nextTier: { name: string; at: number } | null;
 };
 
 const TIER_STYLE: Record<Card["tier"], { grad: string; label: string }> = {
-  Member: { grad: "linear-gradient(135deg, #2a2a2a 0%, #141414 100%)", label: "text-ivory/70" },
+  Bronze: { grad: "linear-gradient(135deg, #2a2016 0%, #141414 100%)", label: "text-[#c9a875]" },
   Silver: { grad: "linear-gradient(135deg, #4a4a48 0%, #1c1c1c 100%)", label: "text-[#c8c8c4]" },
   Gold: { grad: "linear-gradient(135deg, #3a2f10 0%, #141414 55%, #2c230a 100%)", label: "text-gold-2" },
+  Platinum: { grad: "linear-gradient(135deg, #363a52 0%, #141414 55%, #2a2d40 100%)", label: "text-[#a9adcf]" },
 };
 
 export default function LoyaltyCard() {
@@ -100,17 +102,18 @@ export default function LoyaltyCard() {
             </p>
           </div>
 
-          {/* progress to next tier */}
+          {/* progress to next tier — tiers are driven by lifetime AED spend,
+             not the points balance, so the bar tracks spend/nextTier.at */}
           {card.nextTier && (
             <div className="mt-6">
               <div className="flex justify-between text-[11px] tracking-wider text-ivory/45 uppercase">
-                <span>{card.lifetimePoints.toLocaleString()} lifetime</span>
-                <span>{card.nextTier.name} at {card.nextTier.at.toLocaleString()}</span>
+                <span>AED {card.spend.toLocaleString()} spent</span>
+                <span>{card.nextTier.name} at AED {card.nextTier.at.toLocaleString()}</span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ivory/10">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-gold-dim to-gold-2"
-                  style={{ width: `${Math.min(100, (card.lifetimePoints / card.nextTier.at) * 100)}%` }}
+                  style={{ width: `${Math.min(100, (card.spend / card.nextTier.at) * 100)}%` }}
                 />
               </div>
             </div>
@@ -131,7 +134,7 @@ export default function LoyaltyCard() {
 
           <p className="mt-6 text-center text-[11px] leading-relaxed text-ivory/35">
             Earn 1 point for every AED spent on services.
-            <br />Silver at 2,000 · Gold at 5,000 lifetime points.
+            <br />Tier is by lifetime spend — Silver at AED 500, Gold at AED 1,500, Platinum at AED 5,000.
           </p>
         </div>
       )}

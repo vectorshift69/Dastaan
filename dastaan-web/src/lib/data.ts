@@ -59,7 +59,7 @@ export type Appointment = {
   status: BookingStatus;
   online: boolean; // true = client self-booked (⟳), false = booked with barber (✓)
   paid: boolean;
-  loyalty?: { tier: "Gold" | "Silver" | "Member"; points: number };
+  loyalty?: { tier: "Bronze" | "Silver" | "Gold" | "Platinum"; points: number };
   cancelReason?: string;
 };
 
@@ -117,7 +117,7 @@ export const barbers: Barber[] = [
 
 export const dayAppointments: Appointment[] = [
   { id: "a1", barberId: "br1", client: "Sumit Verma", phone: "+971 50 002 1226", serviceIds: ["s1"], start: "10:15", minutes: 75, status: "Arrived", online: false, paid: false, loyalty: { tier: "Gold", points: 5800 } },
-  { id: "a2", barberId: "br1", client: "Alberto Bustani", phone: "+971 55 133 8721", serviceIds: ["s2", "s4"], start: "12:00", minutes: 75, status: "Confirmed", online: true, paid: true, loyalty: { tier: "Member", points: 320 } },
+  { id: "a2", barberId: "br1", client: "Alberto Bustani", phone: "+971 55 133 8721", serviceIds: ["s2", "s4"], start: "12:00", minutes: 75, status: "Confirmed", online: true, paid: true, loyalty: { tier: "Bronze", points: 320 } },
   { id: "a3", barberId: "br1", client: "Mikel Simmonds", phone: "+971 52 774 0913", serviceIds: ["s5"], start: "16:30", minutes: 40, status: "Booked", online: true, paid: false },
   { id: "a4", barberId: "br2", client: "Ish Guleri", phone: "+971 54 660 2284", serviceIds: ["s3"], start: "10:30", minutes: 50, status: "Started", online: false, paid: true, loyalty: { tier: "Silver", points: 1450 } },
   { id: "a5", barberId: "br2", client: "S. S. Radwan", phone: "+971 50 918 5567", serviceIds: ["s3"], start: "13:30", minutes: 50, status: "Booked", online: false, paid: false },

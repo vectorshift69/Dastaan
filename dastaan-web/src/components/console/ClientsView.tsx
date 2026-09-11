@@ -144,7 +144,7 @@ export default function ClientsView() {
                   <td className="px-4 py-3 text-right">
                     {c.loyalty ? (
                       <span className="rounded-full border border-gold/50 bg-gold/10 px-2.5 py-0.5 text-[10px] font-bold tracking-wider text-gold-dim uppercase">
-                        ◆ {c.loyalty.tier} · {c.loyalty.points.toLocaleString()}
+                        ◆ {c.loyalty.points.toLocaleString()} pts
                       </span>
                     ) : <span className="text-charcoal/35">—</span>}
                   </td>
@@ -195,9 +195,9 @@ export default function ClientsView() {
 
           {selected.loyalty && (
             <div className="mt-3 rounded-xl bg-ink px-4 py-3">
-              <p className="text-[10px] tracking-[0.2em] text-ivory/45 uppercase">Loyalty</p>
+              <p className="text-[10px] tracking-[0.2em] text-ivory/45 uppercase">Loyalty points</p>
               <p className="font-display mt-0.5 text-xl text-gold-2">
-                {selected.loyalty.points.toLocaleString()} pts · {selected.loyalty.tier}
+                {selected.loyalty.points.toLocaleString()} pts
               </p>
             </div>
           )}
