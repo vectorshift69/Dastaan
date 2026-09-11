@@ -86,8 +86,10 @@ export default function TeamLogin() {
     setDigits((prev) => prev.slice(0, -1));
   }, [lockedFor]);
 
-  /** Fetch today's quote after login; only shows on first login of the day. */
-  async function fetchQuoteAndProceed() {
+  /** Fetch today's quote after login; only shows on first login of the day.
+   *  Super admins run the desk, not the chair — skip it and go straight in. */
+  async function fetchQuoteAndProceed(role: string) {
+    if (role === "super_admin") return proceedToConsole();
     try {
       const res = await fetch("/api/quotes/daily");
       // 204 = already seen today, or no quotes configured → go straight to console
@@ -124,7 +126,7 @@ export default function TeamLogin() {
           const roleLabel =
             data.role === "super_admin" ? "Super Admin" : data.role === "admin" ? "Admin" : "Barber";
           setWelcome(`${data.name} · ${roleLabel}`);
-          setTimeout(() => fetchQuoteAndProceed(), 900);
+          setTimeout(() => fetchQuoteAndProceed(data.role), 900);
           return;
         }
         if (res.status === 429 && data.retryAfter) setLockedFor(data.retryAfter);
