@@ -13,12 +13,16 @@ export type Branch = {
   lng?: number;
 };
 
+export type ServiceCategory =
+  | "Package" | "Hair service" | "Beard service" | "Coloring" | "Body shave"
+  | "Massage" | "Mani/Pedicure" | "Facial" | "Treatment" | "Body wax";
+
 export type Service = {
   id: string;
   name: string;
   minutes: number;
   price: number; // AED
-  category: "Hair" | "Beard" | "Combos" | "Grooming";
+  category: ServiceCategory;
 };
 
 export type Barber = {
@@ -89,18 +93,18 @@ export const branches: Branch[] = [
 ];
 
 export const services: Service[] = [
-  { id: "s1", name: "Skin Fade & Beard", minutes: 75, price: 268, category: "Combos" },
-  { id: "s2", name: "Classic Haircut", minutes: 45, price: 150, category: "Hair" },
-  { id: "s3", name: "Skin Fade / Taper Fade", minutes: 50, price: 180, category: "Hair" },
-  { id: "s4", name: "Beard Trim & Line Up", minutes: 30, price: 95, category: "Beard" },
-  { id: "s5", name: "Hot Towel Shave", minutes: 40, price: 120, category: "Beard" },
-  { id: "s6", name: "Haircut & Hot Towel Shave", minutes: 80, price: 240, category: "Combos" },
-  { id: "s7", name: "Kids Cut (under 12)", minutes: 30, price: 90, category: "Hair" },
-  { id: "s8", name: "Black Mask Facial", minutes: 35, price: 110, category: "Grooming" },
-  { id: "s9", name: "Head Massage", minutes: 20, price: 70, category: "Grooming" },
-  { id: "s10", name: "Full Grooming Ritual", minutes: 120, price: 420, category: "Combos" },
-  { id: "s11", name: "Beard Colour", minutes: 40, price: 130, category: "Beard" },
-  { id: "s12", name: "Head Shave (razor finish)", minutes: 35, price: 110, category: "Hair" },
+  { id: "s1", name: "Skin Fade & Beard", minutes: 75, price: 268, category: "Package" },
+  { id: "s2", name: "Classic Haircut", minutes: 45, price: 150, category: "Hair service" },
+  { id: "s3", name: "Skin Fade / Taper Fade", minutes: 50, price: 180, category: "Hair service" },
+  { id: "s4", name: "Beard Trim & Line Up", minutes: 30, price: 95, category: "Beard service" },
+  { id: "s5", name: "Hot Towel Shave", minutes: 40, price: 120, category: "Beard service" },
+  { id: "s6", name: "Haircut & Hot Towel Shave", minutes: 80, price: 240, category: "Package" },
+  { id: "s7", name: "Kids Cut (under 12)", minutes: 30, price: 90, category: "Hair service" },
+  { id: "s8", name: "Black Mask Facial", minutes: 35, price: 110, category: "Facial" },
+  { id: "s9", name: "Head Massage", minutes: 20, price: 70, category: "Massage" },
+  { id: "s10", name: "Full Grooming Ritual", minutes: 120, price: 420, category: "Package" },
+  { id: "s11", name: "Beard Colour", minutes: 40, price: 130, category: "Coloring" },
+  { id: "s12", name: "Head Shave (razor finish)", minutes: 35, price: 110, category: "Body shave" },
 ];
 
 export const barbers: Barber[] = [
@@ -164,6 +168,31 @@ export const STATUS_COLOR: Record<BookingStatus, string> = {
   Completed: "var(--color-st-completed)",
   "No Show": "var(--color-st-noshow)",
   Cancelled: "var(--color-st-cancel)",
+};
+
+/* One colour per service category — a glance at the timeline's swatches
+   shows what kind of day it is (heavy on colour work, mostly quick cuts,
+   several packages) the way the status border shows where each visit
+   stands. Deliberately separate from STATUS_COLOR: a card's left border is
+   still status, this dot is what's actually being done. */
+export const CATEGORY_COLOR: Record<ServiceCategory, string> = {
+  Package: "#b8912f",
+  "Hair service": "#4a7a8c",
+  "Beard service": "#6b5a3f",
+  Coloring: "#a63d5c",
+  "Body shave": "#5b6b4a",
+  Massage: "#7a5c8c",
+  "Mani/Pedicure": "#c97b4a",
+  Facial: "#4a8c6b",
+  Treatment: "#8c6b4a",
+  "Body wax": "#5a5a7a",
+};
+
+/** A booking's swatch colour — the first service's category. Multi-service
+ *  bookings still get one clear dot rather than a confusing gradient. */
+export const categoryColorFor = (serviceIds: string[]): string | undefined => {
+  const first = serviceIds[0];
+  return first ? CATEGORY_COLOR[svcById(first).category] : undefined;
 };
 
 /* demo staff codes for /team (mock auth — real impl hashes + rate-limits server-side) */

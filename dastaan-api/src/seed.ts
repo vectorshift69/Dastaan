@@ -79,18 +79,18 @@ const branches = [
 ];
 
 const services: [string, string, number, number, string][] = [
-  ["s1", "Skin Fade & Beard", 75, 268, "Combos"],
-  ["s2", "Classic Haircut", 45, 150, "Hair"],
-  ["s3", "Skin Fade / Taper Fade", 50, 180, "Hair"],
-  ["s4", "Beard Trim & Line Up", 30, 95, "Beard"],
-  ["s5", "Hot Towel Shave", 40, 120, "Beard"],
-  ["s6", "Haircut & Hot Towel Shave", 80, 240, "Combos"],
-  ["s7", "Kids Cut (under 12)", 30, 90, "Hair"],
-  ["s8", "Black Mask Facial", 35, 110, "Grooming"],
-  ["s9", "Head Massage", 20, 70, "Grooming"],
-  ["s10", "Full Grooming Ritual", 120, 420, "Combos"],
-  ["s11", "Beard Colour", 40, 130, "Beard"],
-  ["s12", "Head Shave (razor finish)", 35, 110, "Hair"],
+  ["s1", "Skin Fade & Beard", 75, 268, "Package"],
+  ["s2", "Classic Haircut", 45, 150, "Hair service"],
+  ["s3", "Skin Fade / Taper Fade", 50, 180, "Hair service"],
+  ["s4", "Beard Trim & Line Up", 30, 95, "Beard service"],
+  ["s5", "Hot Towel Shave", 40, 120, "Beard service"],
+  ["s6", "Haircut & Hot Towel Shave", 80, 240, "Package"],
+  ["s7", "Kids Cut (under 12)", 30, 90, "Hair service"],
+  ["s8", "Black Mask Facial", 35, 110, "Facial"],
+  ["s9", "Head Massage", 20, 70, "Massage"],
+  ["s10", "Full Grooming Ritual", 120, 420, "Package"],
+  ["s11", "Beard Colour", 40, 130, "Coloring"],
+  ["s12", "Head Shave (razor finish)", 35, 110, "Body shave"],
 ];
 const servicePrice = new Map(services.map((s) => [s[0], s[3]]));
 const serviceMinutes = new Map(services.map((s) => [s[0], s[2]]));

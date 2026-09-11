@@ -851,6 +851,23 @@ export async function migrate() {
       value      TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    /* Re-categorise the seeded services onto the finer taxonomy the
+       calendar's colour-coding is keyed on (Package/Hair service/Beard
+       service/Coloring/Body shave/Massage/Facial — Mani-Pedicure, Treatment
+       and Body wax aren't in the current menu, but are valid categories for
+       services added later). A database seeded before this change has the
+       old, coarser category strings ("Hair", "Beard", "Combos", "Grooming")
+       on these rows — this brings it in line with what seed.ts now writes,
+       without needing a reseed. Safe to run every startup: it only ever
+       sets these 12 known ids to a fixed value. */
+    UPDATE services SET category = 'Package'      WHERE id IN ('s1','s6','s10');
+    UPDATE services SET category = 'Hair service' WHERE id IN ('s2','s3','s7');
+    UPDATE services SET category = 'Beard service' WHERE id IN ('s4','s5');
+    UPDATE services SET category = 'Facial'       WHERE id = 's8';
+    UPDATE services SET category = 'Massage'      WHERE id = 's9';
+    UPDATE services SET category = 'Coloring'     WHERE id = 's11';
+    UPDATE services SET category = 'Body shave'   WHERE id = 's12';
   `);
 }
 

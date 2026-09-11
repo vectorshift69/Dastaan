@@ -8,6 +8,7 @@ import {
   toLabel,
   svcById,
   STATUS_COLOR,
+  categoryColorFor,
   type Appointment,
   type Barber,
 } from "@/lib/data";
@@ -118,6 +119,7 @@ export default function Calendar({
                   const shownMinutes = Math.max(15, effectiveEnd - toMin(a.start));
                   const h = shownMinutes * PX_PER_MIN;
                   const color = STATUS_COLOR[a.status];
+                  const catColor = categoryColorFor(a.serviceIds);
                   const muted = a.status === "Cancelled" || a.status === "No Show";
                   const selected = selectedId === a.id;
                   return (
@@ -153,8 +155,15 @@ export default function Calendar({
                         <p className={`mt-0.5 truncate text-[12.5px] font-bold text-ink ${muted ? "line-through" : ""}`}>
                           {a.client}
                         </p>
-                        <p className="truncate text-[11px] text-charcoal/60">
-                          {a.serviceIds.map((id) => svcById(id).name).join(" + ")}
+                        <p className="flex items-center gap-1 truncate text-[11px] text-charcoal/60">
+                          {catColor && (
+                            <span
+                              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                              style={{ background: catColor }}
+                              title={svcById(a.serviceIds[0]!).category}
+                            />
+                          )}
+                          <span className="truncate">{a.serviceIds.map((id) => svcById(id).name).join(" + ")}</span>
                         </p>
                         {h > 80 && (
                           <span
