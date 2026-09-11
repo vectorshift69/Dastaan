@@ -41,6 +41,82 @@ const ROLE_TONE: Record<string, string> = {
   shop_manager: "bg-[#6a5acd]/12 text-[#5b4bbd]",
 };
 
+/* ---------- visit reward: interval + amount, editable by the owner ---------- */
+function RewardSettings() {
+  const [visitsPerReward, setVisitsPerReward] = useState("");
+  const [rewardAmount, setRewardAmount] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/rewards/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) { setVisitsPerReward(String(d.visitsPerReward)); setRewardAmount(String(d.rewardAmount)); }
+      })
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const save = async () => {
+    setBusy(true); setErr(null); setSaved(false);
+    const res = await fetch("/api/rewards/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ visitsPerReward: Number(visitsPerReward), rewardAmount: Number(rewardAmount) }),
+    });
+    const d = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 3000); }
+    else setErr(d.error ?? "Could not save that");
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="mt-5 rounded-2xl border border-black/8 bg-white p-5">
+      <h2 className="text-[11px] font-bold tracking-[0.18em] text-charcoal/45 uppercase">
+        Visit reward
+      </h2>
+      <p className="mt-1 text-[13px] text-charcoal/55">
+        Clients automatically earn store credit after a set number of completed visits.
+      </p>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <label className="text-xs text-charcoal/60">
+          Every
+          <input
+            inputMode="numeric"
+            value={visitsPerReward}
+            onChange={(e) => setVisitsPerReward(e.target.value.replace(/[^0-9]/g, ""))}
+            className="mx-2 w-16 rounded-lg border border-black/12 px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-gold"
+          />
+          visits
+        </label>
+        <label className="text-xs text-charcoal/60">
+          client gets AED
+          <input
+            inputMode="decimal"
+            value={rewardAmount}
+            onChange={(e) => setRewardAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            className="mx-2 w-20 rounded-lg border border-black/12 px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-gold"
+          />
+          credit
+        </label>
+        <button
+          onClick={save}
+          disabled={busy || !visitsPerReward || !rewardAmount}
+          className="btn-gold rounded-full px-5 py-1.5 text-[13px] disabled:opacity-40"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && <span className="text-xs font-semibold text-st-started">Saved</span>}
+        {err && <span className="text-xs font-semibold text-st-cancel">{err}</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function TeamView({ meId }: { meId?: string }) {
   const [users, setUsers] = useState<User[]>([]);
   const [denied, setDenied] = useState(false);
@@ -100,6 +176,8 @@ export default function TeamView({ meId }: { meId?: string }) {
 
       {msg && <p className="mt-3 rounded-lg bg-st-started/10 px-4 py-2 text-sm text-st-started">{msg}</p>}
       {err && <p className="mt-3 rounded-lg bg-st-cancel/10 px-4 py-2 text-sm text-st-cancel">{err}</p>}
+
+      <RewardSettings />
 
       {/* ---------- salon staff ---------- */}
       <div className="mt-5 flex items-center gap-3">

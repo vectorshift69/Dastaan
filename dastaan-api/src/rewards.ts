@@ -1,15 +1,34 @@
 /* ------------------------------------------------------------------ */
-/* Visit-based store credit: every 5th completed visit (a checked-out  */
-/* booking) earns the client AED 25 credit, automatically, redeemable  */
-/* against a store order. A ledger records every grant and redemption  */
-/* so the running balance is always reconstructable, the same pattern  */
-/* as points_transactions in loyalty.ts.                                */
+/* Visit-based store credit: every Nth completed visit (a checked-out  */
+/* booking) earns the client a fixed AED credit, automatically,        */
+/* redeemable against a store order. Both the interval and the amount  */
+/* are admin-editable (see settings.ts, routes/rewards.ts) — these are */
+/* only the defaults for a salon that hasn't changed them. A ledger    */
+/* records every grant and redemption so the running balance is always */
+/* reconstructable, the same pattern as points_transactions in         */
+/* loyalty.ts.                                                          */
 /* ------------------------------------------------------------------ */
 
 import { db, uid, now } from "./db.js";
+import { getNumberSetting, setSetting } from "./settings.js";
 
-const VISITS_PER_REWARD = 5;
-const REWARD_AMOUNT = 25;
+const VISITS_PER_REWARD_DEFAULT = 5;
+const REWARD_AMOUNT_DEFAULT = 25;
+
+const VISITS_KEY = "visit_reward_interval";
+const AMOUNT_KEY = "visit_reward_amount";
+
+export async function visitRewardSettings(): Promise<{ visitsPerReward: number; rewardAmount: number }> {
+  return {
+    visitsPerReward: await getNumberSetting(VISITS_KEY, VISITS_PER_REWARD_DEFAULT),
+    rewardAmount: await getNumberSetting(AMOUNT_KEY, REWARD_AMOUNT_DEFAULT),
+  };
+}
+
+export async function setVisitRewardSettings(visitsPerReward: number, rewardAmount: number): Promise<void> {
+  await setSetting(VISITS_KEY, String(visitsPerReward));
+  await setSetting(AMOUNT_KEY, String(rewardAmount));
+}
 
 export type CreditAccount = {
   id: string;
@@ -34,20 +53,21 @@ export async function ensureCreditAccount(clientId: string): Promise<CreditAccou
   return { id, clientId, balance: 0, visitCount: 0 };
 }
 
-/** Called once per completed checkout. Returns the credit granted, if any (0 on visits that don't complete a set of five). */
+/** Called once per completed checkout. Returns the credit granted, if any (0 on visits that don't complete a set). */
 export async function recordVisit(clientId: string, bookingId: string): Promise<number> {
+  const { visitsPerReward, rewardAmount } = await visitRewardSettings();
   const acc = await ensureCreditAccount(clientId);
   const visitCount = acc.visitCount + 1;
-  const earnsReward = visitCount % VISITS_PER_REWARD === 0;
+  const earnsReward = visitCount % visitsPerReward === 0;
   await db.prepare(
     "UPDATE client_credit_accounts SET visit_count = ?, balance = balance + ? WHERE id = ?"
-  ).run(visitCount, earnsReward ? REWARD_AMOUNT : 0, acc.id);
+  ).run(visitCount, earnsReward ? rewardAmount : 0, acc.id);
   if (earnsReward) {
     await db.prepare(
       `INSERT INTO client_credit_transactions (id, account_id, delta, reason, booking_id, created_at)
        VALUES (?,?,?,?,?,?)`
-    ).run(uid(), acc.id, REWARD_AMOUNT, "visit_reward", bookingId, now());
-    return REWARD_AMOUNT;
+    ).run(uid(), acc.id, rewardAmount, "visit_reward", bookingId, now());
+    return rewardAmount;
   }
   return 0;
 }
@@ -71,8 +91,9 @@ export async function creditBalanceFor(clientId: string): Promise<{
   visitCount: number;
   visitsToNextReward: number;
 }> {
+  const { visitsPerReward } = await visitRewardSettings();
   const acc = await ensureCreditAccount(clientId);
-  const visitsToNextReward = VISITS_PER_REWARD - (acc.visitCount % VISITS_PER_REWARD);
+  const visitsToNextReward = visitsPerReward - (acc.visitCount % visitsPerReward);
   return { balance: acc.balance, visitCount: acc.visitCount, visitsToNextReward };
 }
 

@@ -841,6 +841,16 @@ export async function migrate() {
        their slot for someone else to book, instead of it sitting blocked
        until the original estimated end time. */
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS completed_at TEXT;
+
+    /* ---- app settings ----
+       A small admin-editable key/value store for numbers that used to be
+       hardcoded constants (the visit-reward interval and amount, so far) —
+       so tuning them is a settings change, not a redeploy. */
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
